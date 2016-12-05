@@ -29,7 +29,7 @@ IIRFilter::IIRFilter(const std::string& error_prefix) :
     m_error_prefix = error_prefix;
 }
 
-bool IIRFilter::setParameter(int dim, std::vector<double>& A, std::vector<double>& B) {
+bool IIRFilter::setParameter(const int dim, const std::vector<double>& A, const std::vector<double>& B) {
     m_dimension = dim;
 
     // init coefficients
