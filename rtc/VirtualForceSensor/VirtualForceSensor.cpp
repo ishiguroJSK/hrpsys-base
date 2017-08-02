@@ -135,7 +135,6 @@ RTC::ReturnCode_t VirtualForceSensor::onInitialize()
     registerOutPort((*it).first.c_str(), *m_forceOut[i]);
     it++; i++;
   }
-  
   return RTC::RTC_OK;
 }
 
@@ -177,14 +176,9 @@ RTC::ReturnCode_t VirtualForceSensor::onDeactivated(RTC::UniqueId ec_id)
 #define DEBUGP ((m_debugLevel==1 && loop%200==0) || m_debugLevel > 1 )
 RTC::ReturnCode_t VirtualForceSensor::onExecute(RTC::UniqueId ec_id)
 {
-  //std::cout << m_profile.instance_name<< ": onExecute(" << ec_id << ")" << std::endl;
+//  std::cout << m_profile.instance_name<< ": onExecute(" << ec_id << ")" << std::endl;
   static int loop = 0;
   loop ++;
-
-  coil::TimeValue coiltm(coil::gettimeofday());
-  RTC::Time tm;
-  tm.sec = coiltm.sec();
-  tm.nsec = coiltm.usec()*1000;
 
   if (m_qCurrentIn.isNew()) {
     m_qCurrentIn.read();
@@ -250,7 +244,7 @@ RTC::ReturnCode_t VirtualForceSensor::onExecute(RTC::UniqueId ec_id)
         std::cerr << std::endl;
       }
 
-      m_force[i].tm = tm; // put timestamp
+      m_force[i].tm = m_qCurrent.tm; // put timestamp
       m_forceOut[i]->write();
 
       it++; i++;
