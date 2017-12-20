@@ -1632,6 +1632,29 @@ void Stabilizer::calcEEForceMomentControl() {
 
       limbStretchAvoidanceControl(tmpp ,tmpR);
 
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+      static hrp::Vector3 comp = hrp::Vector3::Zero();
+      hrp::Vector3 est_cable_force;
+      est_cable_force << (act_force[0] + act_force[1]).head(2) , 0;
+      hrp::Vector3 comp_tmp;
+      const double cable_height = 1.0;
+      comp_tmp(0) = est_cable_force(0) * cable_height / (m_robot->totalMass() * 9.8); // cable_force * cable_height = com_comp * mg
+      comp_tmp(1) = est_cable_force(1) * cable_height / (m_robot->totalMass() * 9.8);
+      comp_tmp(2) = 0.0;
+      comp = 0.999 * comp + 0.001 * comp_tmp;
+      std::cout<<"comp: "<<comp.transpose()<<std::endl;
+      std::cout<<"est_cable_force: "<<est_cable_force.transpose()<<std::endl;
+      m_robot->rootLink()->p += comp;
+
+
+
+
+
+
+
       // IK
       for (size_t i = 0; i < stikp.size(); i++) {
         if (is_ik_enable[i]) {
