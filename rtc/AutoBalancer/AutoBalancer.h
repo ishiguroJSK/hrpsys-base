@@ -132,6 +132,8 @@ class AutoBalancer
   InPort<TimedOrientation3D> m_baseRpyIn;
   TimedPoint3D m_zmp;
   InPort<TimedPoint3D> m_zmpIn;
+  TimedPoint3D m_actZmp;
+  InPort<TimedPoint3D> m_actZmpIn;
   TimedDoubleSeq m_optionalData;
   InPort<TimedDoubleSeq> m_optionalDataIn;
   std::vector<TimedDoubleSeq> m_ref_force;
@@ -258,7 +260,8 @@ class AutoBalancer
   hrp::Vector3 target_root_p;
   hrp::Matrix33 target_root_R;
   rats::coordinates fix_leg_coords, fix_leg_coords2;
-  std::vector<hrp::Vector3> default_zmp_offsets;
+  std::vector<hrp::Vector3> default_zmp_offsets, final_zmp_offsets;
+  hrp::Vector3 active_zmp_offset;
   double m_dt;
   hrp::BodyPtr m_robot;
   coil::Mutex m_mutex;

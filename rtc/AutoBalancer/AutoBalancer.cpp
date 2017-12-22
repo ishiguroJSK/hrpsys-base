@@ -58,6 +58,7 @@ AutoBalancer::AutoBalancer(RTC::Manager* manager)
       m_basePosIn("basePosIn", m_basePos),
       m_baseRpyIn("baseRpyIn", m_baseRpy),
       m_zmpIn("zmpIn", m_zmp),
+      m_actZmpIn("actZmpIn", m_actZmp),
       m_optionalDataIn("optionalData", m_optionalData),
       m_emergencySignalIn("emergencySignal", m_emergencySignal),
       m_diffCPIn("diffCapturePoint", m_diffCP),
@@ -103,6 +104,7 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     addInPort("basePosIn", m_basePosIn);
     addInPort("baseRpyIn", m_baseRpyIn);
     addInPort("zmpIn", m_zmpIn);
+    addInPort("actZmpIn", m_actZmpIn);
     addInPort("optionalData", m_optionalDataIn);
     addInPort("emergencySignal", m_emergencySignalIn);
     addInPort("diffCapturePoint", m_diffCPIn);
@@ -290,11 +292,13 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
     if (default_zmp_offsets.size() == 0) {
       for (size_t i = 0; i < ikp.size(); i++) default_zmp_offsets.push_back(hrp::Vector3::Zero());
     }
+    final_zmp_offsets = default_zmp_offsets;
     if (leg_offset_str.size() > 0) {
       gg = ggPtr(new rats::gait_generator(m_dt, leg_pos, leg_names, stride_fwd_x_limit/*[m]*/, stride_outside_y_limit/*[m]*/, stride_outside_th_limit/*[deg]*/,
                                           stride_bwd_x_limit/*[m]*/, stride_inside_y_limit/*[m]*/, stride_inside_th_limit/*[m]*/));
-      gg->set_default_zmp_offsets(default_zmp_offsets);
+      gg->set_default_zmp_offsets(final_zmp_offsets);
     }
+    active_zmp_offset = hrp::Vector3::Zero();
     gg_is_walking = gg_solved = false;
     m_walkingStates.data = false;
     fix_leg_coords = coordinates();
@@ -489,6 +493,21 @@ RTC::ReturnCode_t AutoBalancer::onExecute(RTC::UniqueId ec_id)
       }
       gg->set_act_contact_states(tmp_contacts);
     }
+    if (m_actZmpIn.isNew()){
+        m_actZmpIn.read();
+        static int count;
+            hrp::Vector2 zmp_diff = hrp::Vector2(m_actZmp.data.x, m_actZmp.data.y)+m_robot->rootLink()->p.head(2) - (ref_zmp - active_zmp_offset).head(2);
+            static hrp::Vector2 zmp_diff_filt;
+            const double alpha = 0.1;
+            zmp_diff_filt = zmp_diff_filt * (1-alpha) + zmp_diff * alpha;
+            active_zmp_offset += hrp::Vector3(-zmp_diff_filt(0),-zmp_diff_filt(1),0) * 1.0/(500*1);
+            if(active_zmp_offset.norm()>0.1) active_zmp_offset = active_zmp_offset.normalized() * 0.1;
+            if(loop%100==0) cout<<active_zmp_offset.transpose()<<" : "<<zmp_diff.transpose()<<endl;
+    }
+    for(int i=0;i<final_zmp_offsets.size();i++){
+        final_zmp_offsets[i] = default_zmp_offsets[i] + active_zmp_offset;
+    }
+
 
     // Calculation
     Guard guard(m_mutex);
@@ -679,7 +698,7 @@ void AutoBalancer::getTargetParameters()
     // Calculate tmp_fix_coords and something
     coordinates tmp_fix_coords;
     if ( gg_is_walking ) {
-      gg->set_default_zmp_offsets(default_zmp_offsets);
+      gg->set_default_zmp_offsets(final_zmp_offsets);
       gg_solved = gg->proc_one_tick();
       gg->get_swing_support_mid_coords(tmp_fix_coords);
     } else {
@@ -790,9 +809,9 @@ void AutoBalancer::getOutputParametersForWalking ()
             // controlSwingSupportTime is not used while double support period, 1.0 is neglected
             m_controlSwingSupportTime.data[idx] = 1.0;
             // Set limbCOPOffset
-            m_limbCOPOffset[idx].data.x = default_zmp_offsets[idx](0);
-            m_limbCOPOffset[idx].data.y = default_zmp_offsets[idx](1);
-            m_limbCOPOffset[idx].data.z = default_zmp_offsets[idx](2);
+            m_limbCOPOffset[idx].data.x = final_zmp_offsets[idx](0);
+            m_limbCOPOffset[idx].data.y = final_zmp_offsets[idx](1);
+            m_limbCOPOffset[idx].data.z = final_zmp_offsets[idx](2);
             // Set toe heel ratio which can be used force moment distribution
             m_toeheelRatio.data[idx] = rats::no_using_toe_heel_ratio;
         }
@@ -821,9 +840,9 @@ void AutoBalancer::getOutputParametersForABC ()
         // controlSwingSupportTime is not used while double support period, 1.0 is neglected
         m_controlSwingSupportTime.data[idx] = 1.0;
         // Set limbCOPOffset
-        m_limbCOPOffset[idx].data.x = default_zmp_offsets[idx](0);
-        m_limbCOPOffset[idx].data.y = default_zmp_offsets[idx](1);
-        m_limbCOPOffset[idx].data.z = default_zmp_offsets[idx](2);
+        m_limbCOPOffset[idx].data.x = final_zmp_offsets[idx](0);
+        m_limbCOPOffset[idx].data.y = final_zmp_offsets[idx](1);
+        m_limbCOPOffset[idx].data.z = final_zmp_offsets[idx](2);
         // Set toe heel ratio is not used while double support
         m_toeheelRatio.data[idx] = rats::no_using_toe_heel_ratio;
     }
@@ -960,7 +979,7 @@ void AutoBalancer::calculateOutputRefForces ()
         std::vector<hrp::Vector3> ee_pos;
         for (size_t i = 0 ; i < leg_names.size(); i++) {
             ABCIKparam& tmpikp = ikp[leg_names[i]];
-            ee_pos.push_back(tmpikp.target_p0 + tmpikp.target_r0 * default_zmp_offsets[i]);
+            ee_pos.push_back(tmpikp.target_p0 + tmpikp.target_r0 * final_zmp_offsets[i]);
         }
         double alpha = (ref_zmp - ee_pos[1]).norm() / ((ee_pos[0] - ref_zmp).norm() + (ee_pos[1] - ref_zmp).norm());
         if (alpha>1.0) alpha = 1.0;
@@ -988,7 +1007,7 @@ hrp::Vector3 AutoBalancer::calcFootMidPosUsingZMPWeightMap ()
         ABCIKparam& tmpikp = ikp[leg_names[i]];
         // for foot_mid_pos
         std::map<leg_type, std::string>::const_iterator dst = std::find_if(leg_type_map.begin(), leg_type_map.end(), (&boost::lambda::_1->* &std::map<leg_type, std::string>::value_type::second == leg_names[i]));
-        tmp_foot_mid_pos += (tmpikp.target_p0 + tmpikp.target_r0 * default_zmp_offsets[i]) * zmp_weight_map[dst->first];
+        tmp_foot_mid_pos += (tmpikp.target_p0 + tmpikp.target_r0 * final_zmp_offsets[i]) * zmp_weight_map[dst->first];
         sum_of_weight += zmp_weight_map[dst->first];
     }
     tmp_foot_mid_pos *= (1.0 / sum_of_weight);
@@ -1190,7 +1209,7 @@ bool AutoBalancer::startWalking ()
         init_support_leg_steps.push_back(step_node(*it, coordinates(ikp[*it].target_p0, ikp[*it].target_r0), 0, 0, 0, 0));
     for (std::vector<std::string>::iterator it = init_swing_leg_names.begin(); it != init_swing_leg_names.end(); it++)
         init_swing_leg_dst_steps.push_back(step_node(*it, coordinates(ikp[*it].target_p0, ikp[*it].target_r0), 0, 0, 0, 0));
-    gg->set_default_zmp_offsets(default_zmp_offsets);
+    gg->set_default_zmp_offsets(final_zmp_offsets);
     gg->initialize_gait_parameter(ref_cog, init_support_leg_steps, init_swing_leg_dst_steps);
   }
   is_hand_fix_initial = true;
