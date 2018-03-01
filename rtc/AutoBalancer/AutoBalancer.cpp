@@ -174,7 +174,8 @@ RTC::ReturnCode_t AutoBalancer::onInitialize()
 
     // Generate FIK
     fik = fikPtr(new FullbodyInverseKinematicsSolver(m_robot, std::string(m_profile.instance_name), m_dt));
-    ik_mode = OpenHRP::AutoBalancerService::SIMPLE;
+//    ik_mode = OpenHRP::AutoBalancerService::SIMPLE;
+    ik_mode = OpenHRP::AutoBalancerService::FULLBODY;
 
     // setting from conf file
     // rleg,TARGET_LINK,BASE_LINK

@@ -1828,7 +1828,7 @@ void Stabilizer::solveFullbodyIK(
         tmp.localR = hrp::Matrix33::Identity();
         tmp.targetPos = com_pos;// COM height will not be constraint
         tmp.targetRpy = com_am;//reference angular momentum
-        tmp.constraint_weight << 1,1,1,0.1,0.1,0.1;// consider angular momentum (JAXON)
+        tmp.constraint_weight << 1,1,1,0,0,0;
         if(control_mode != MODE_ST) tmp.constraint_weight.tail(3).fill(0);// disable angular momentum control in transition
         ik_tgt_list.push_back(tmp);
     }
