@@ -40,6 +40,7 @@ class IKConstraint {
          pos_precision(1e-4), rot_precision(deg2rad(0.1)){}
 };
 
+#define OPENHRP_PACKAGE_VERSION_320
 
 class FullbodyInverseKinematicsSolver : public SimpleFullbodyInverseKinematicsSolver{
     protected:
@@ -210,7 +211,7 @@ class FullbodyInverseKinematicsSolver : public SimpleFullbodyInverseKinematicsSo
                 hrp::dmatrix H = J_all.transpose() * constraint_weight_all.asDiagonal() * J_all + Wn;
                 hrp::dvector g = J_all.transpose() * constraint_weight_all.asDiagonal() * err_all;
                 dq_all = H.inverse() * g;
-
+//                dbg(dq_all.transpose());
     //            // debug print
     //            static int count;
     //            if(count++ % 10000 == 0){
@@ -229,8 +230,14 @@ class FullbodyInverseKinematicsSolver : public SimpleFullbodyInverseKinematicsSo
     //                std::cout<<std::endl;
     //            }
 
+                for(int i=0;i<J_DOF;i++){
+                    if(fabs(dq_all(i))>4*m_dt){
+                        dq_all *= 4*m_dt / fabs(dq_all(i));
+                    }
+                }
+
                 // update joint angles
-                for(int i=0;i<dq_all.rows();i++){ if( isnan(dq_all(i)) || isinf(dq_all(i)) ){ std::cerr <<"ERROR nan/inf is found" << std::endl; return;} }
+                for(int i=0;i<dq_all.rows();i++){ if( isnan(dq_all(i)) || isinf(dq_all(i)) ){ dbg(dq_all.transpose());std::cerr <<"ERROR nan/inf is found" << std::endl; return;} }
                 for(int i=0;i<J_DOF;i++){
                     _robot->joint(i)->q += dq_all(i);
                     LIMIT_MINMAX(_robot->joint(i)->q, _robot->joint(i)->llimit, _robot->joint(i)->ulimit);
@@ -247,11 +254,22 @@ class FullbodyInverseKinematicsSolver : public SimpleFullbodyInverseKinematicsSo
                 hrp::Matrix33 dR;
                 hrp::Vector3 omega = dq_all.tail(6).tail(3);
                 hrp::calcRodrigues(dR, omega.normalized(), omega.norm());
-                if(!(_robot->rootLink()->R * dR).isUnitary()){
-                    std::cerr <<"ERROR R_base_ans is not Unitary" << std::endl; return;
-                }else{
-                    _robot->rootLink()->R = _robot->rootLink()->R * dR;
+
+                _robot->rootLink()->R = _robot->rootLink()->R * dR;
+                if(!_robot->rootLink()->R.isUnitary()){
+                                        std::cerr <<"ERROR R_base_ans is not Unitary" << std::endl;
+                    Eigen::Quaternion<double> quat(_robot->rootLink()->R);
+                     _robot->rootLink()->R = quat.normalized().toRotationMatrix();
                 }
+
+//                if(!(_robot->rootLink()->R * dR).isUnitary()){
+//                    std::cerr <<"ERROR R_base_ans is not Unitary" << std::endl;
+//                    dbgn(_robot->rootLink()->R);
+//                    dbgn(dR);
+//                    return;
+//                }else{
+//                    _robot->rootLink()->R = _robot->rootLink()->R * dR;
+//                }
                 _robot->calcForwardKinematics();
             #else
                 std::cerr<<"solveFullbodyIKOnce() needs OPENHRP_PACKAGE_VERSION_320 !!!"<<std::endl;

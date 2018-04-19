@@ -1796,6 +1796,7 @@ void Stabilizer::solveFullbodyIK(
     m_robot->rootLink()->p = root_p;
     m_robot->rootLink()->R = root_R;
     setQAll(m_robot, qorg);
+    m_robot->calcForwardKinematics();
 
     std::vector<IKConstraint> ik_tgt_list;
     {
@@ -1805,7 +1806,7 @@ void Stabilizer::solveFullbodyIK(
         tmp.localR = hrp::Matrix33::Identity();
         tmp.targetPos = base_pos;// will be ignored by selection_vec
         tmp.targetRpy = hrp::rpyFromRot(base_rot);
-    //        tmp.constraint_weight << 0,0,0,1e-6,1e-6,1e-6;// don't let base rot free (numerical error problem) 最小1e-6?
+//            tmp.constraint_weight << 0,0,0,1e-6,1e-6,1e-6;// don't let base rot free (numerical error problem) 最小1e-6?
         tmp.constraint_weight << 0,0,0,1,1,1;// フライホイール動作時にベースリンクの回転拘束きついと腕にしわ寄せが行って暴れやすい
         if(control_mode != MODE_ST) tmp.constraint_weight << 0,0,0,1,1,1;//transition中に回転フリーは危ない
         ik_tgt_list.push_back(tmp);
@@ -1821,14 +1822,57 @@ void Stabilizer::solveFullbodyIK(
           tmp.constraint_weight << 1,1,1,1,1,1;
           ik_tgt_list.push_back(tmp);
       }
-    }{
+    }
+
+
+    static hrp::Vector3 act_cp_filt = act_cp;
+//    act_cp_filt = act_cp_filt * 0.9 + act_cp * 0.1;
+    act_cp_filt = act_cp;
+
+    const std::string rhname = "R_WRIST_Y";
+    const std::string lhname = "L_WRIST_Y";
+//    const std::string rhname = "RARM_JOINT7";
+//    const std::string lhname = "LARM_JOINT7";
+
+    const double maxv = 4;
+    if(act_cp_filt.head(2).norm()>0.2){
+        dbg(act_cp_filt.transpose());
+        if(act_cp_filt(1)<0.2){
+            hrp::Vector3 tgt = hrp::Vector3(act_cp_filt(0)*3,act_cp_filt(1)*2-0.2,0.3);
+            hrp::Vector3 vec = tgt - m_robot->link(rhname)->p;
+            if(vec.norm() > maxv * dt)vec = vec.normalized() * maxv * dt;
+            IKConstraint tmp;
+            tmp.target_link_name = rhname;
+            tmp.localPos << 0,0,0;
+            tmp.localR = hrp::Matrix33::Identity();
+            tmp.targetPos = m_robot->link(rhname)->p + vec;
+            tmp.constraint_weight << 0.1,0.1,0.1,0,0,0;
+            ik_tgt_list.push_back(tmp);
+        }
+        if(act_cp_filt(1)>-0.2){
+            hrp::Vector3 tgt = hrp::Vector3(act_cp_filt(0)*3,act_cp_filt(1)*2+0.2,0.3);
+            hrp::Vector3 vec = tgt - m_robot->link(lhname)->p;
+            if(vec.norm() > maxv * dt)vec = vec.normalized() * maxv * dt;
+            IKConstraint tmp;
+            tmp.target_link_name = lhname;
+            tmp.localPos << 0,0,0;
+            tmp.localR = hrp::Matrix33::Identity();
+            tmp.targetPos = m_robot->link(lhname)->p + vec;
+            tmp.constraint_weight << 0.1,0.1,0.1,0,0,0;
+            ik_tgt_list.push_back(tmp);
+        }
+    }
+
+
+    {
         IKConstraint tmp;
         tmp.target_link_name = "COM";
         tmp.localPos = hrp::Vector3::Zero();
         tmp.localR = hrp::Matrix33::Identity();
         tmp.targetPos = com_pos;// COM height will not be constraint
         tmp.targetRpy = com_am;//reference angular momentum
-        tmp.constraint_weight << 1,1,1,0,0,0;
+        tmp.constraint_weight << 3,3,1e-6,0,0,0;
+//        tmp.constraint_weight << 1,1,1,0.1,0.1,0.1;
         if(control_mode != MODE_ST) tmp.constraint_weight.tail(3).fill(0);// disable angular momentum control in transition
         ik_tgt_list.push_back(tmp);
     }
@@ -1849,6 +1893,18 @@ void Stabilizer::solveFullbodyIK(
         else if(m_robot->link(i)->name.find("HEAD_JOINT") != std::string::npos){
             fik->q_ref_constraint_weight(m_robot->link(i)->jointId) = 1e-6;
         }
+//        if(m_robot->link(i)->name.find("L_WRIST") != std::string::npos){
+//            fik->dq_weight_all(m_robot->link(i)->jointId) = 10;
+//            fik->q_ref_constraint_weight(m_robot->link(i)->jointId) = 1e-3;
+//        }
+//        if(m_robot->link(i)->name.find("L_SHOULDER") != std::string::npos){
+//            fik->dq_weight_all(m_robot->link(i)->jointId) = 10;
+//            fik->q_ref_constraint_weight(m_robot->link(i)->jointId) = 1e-3;
+//        }
+//        if(m_robot->link(i)->name.find("L_ELBOW") != std::string::npos){
+//            fik->dq_weight_all(m_robot->link(i)->jointId) = 10;
+//            fik->q_ref_constraint_weight(m_robot->link(i)->jointId) = 1e-3;
+//        }
     }
     fik->dq_weight_all.tail(3).fill(1e1);//ベースリンク回転変位の重みは1e1以下は暴れる？
     fik->q_ref = qrefv;
