@@ -742,6 +742,14 @@ RTC::ReturnCode_t Stabilizer::onExecute(RTC::UniqueId ec_id)
       m_debugDataOut.write();
     }
     m_qRefOut.write();
+
+    calcTorque();
+
+    for(int i=0;i<m_robot->numJoints();i++){m_tau.data[i] = m_robot->joint(i)->u;}
+
+    m_tau.tm = m_qRef.tm;
+
+    m_tauOut.write();
     // emergencySignal
     if (reset_emergency_flag) {
       m_emergencySignal.data = 0;
@@ -2732,89 +2740,406 @@ void Stabilizer::calcContactMatrix (hrp::dmatrix& tm, const std::vector<hrp::Vec
   // }
 }
 
+
+static hrp::dvector6 moveWrenchWorkingPoint(const hrp::dvector6& wrench_from, const hrp::Vector3& point_from, const hrp::Vector3& point_to)
+{
+    hrp::dvector6 wrench_moved;
+//    wrench_moved.head(3) = wrench_from.head(3) + (point_to - point_from).cross(hrp::Vector3(wrench_from.tail(3)));
+
+//    wrench_from.tail(3) =  wrench_moved.tail(3) + hrp::hat(point_to - point_from) * (hrp::Vector3(wrench_moved.head(3)));
+
+//    wrench_moved.tail(3) = wrench_from.tail(3) + (point_from - point_to).cross(hrp::Vector3(wrench_from.head(3)));
+
+    wrench_moved.head(3) = hrp::hat(point_to - point_from).inverse() * (wrench_from.tail(3) - wrench_from.tail(3));
+
+
+
+    return wrench_moved;
+}
+
+
+class ContactInfo{
+    private:
+    public:
+        ContactInfo(hrp::Link* l, const hrp::Vector3& lp)
+            :target_link_(l),
+             local_pos_(lp){}
+        hrp::Link* target_link_;
+        hrp::Vector3 local_pos_;
+        hrp::Vector3 world_pos_;
+        hrp::Vector3 world_pos_old_;
+        hrp::Vector3 world_f_;
+        hrp::Vector3 CalcWorldPos(){ world_pos_ = target_link_->p + target_link_->R * local_pos_; return world_pos_;}
+        void UpdateState(){world_pos_old_ = world_pos_;}
+        friend std::ostream& operator<<(std::ostream& os, const ContactInfo& ci){
+            os<< "target_link: "<<ci.target_link_->name<<" local_pos: "<<ci.local_pos_.transpose();
+            return os;
+        }
+};
+
+#define dbg(var) std::cout<<#var"= "<<(var)<<std::endl
+
 void Stabilizer::calcTorque ()
 {
-  m_robot->calcForwardKinematics();
-  // buffers for the unit vector method
-  hrp::Vector3 root_w_x_v;
-  hrp::Vector3 g(0, 0, 9.80665);
-  root_w_x_v = m_robot->rootLink()->w.cross(m_robot->rootLink()->vo + m_robot->rootLink()->w.cross(m_robot->rootLink()->p));
-  m_robot->rootLink()->dvo = g - root_w_x_v;   // dv = g, dw = 0
-  m_robot->rootLink()->dw.setZero();
+    enum RL_ENUM{R = 0,L,RL};
+    enum XYZ_ENUM{X = 0,Y,Z,XYZ};
+    for(int i=0;i<m_robot->numJoints();i++)m_robot->joint(i)->q = m_qCurrent.data[i];
 
-  hrp::Vector3 root_f;
-  hrp::Vector3 root_t;
-  m_robot->calcInverseDynamics(m_robot->rootLink(), root_f, root_t);
-  // if (loop % 200 == 0) {
-  //   std::cerr << ":mass " << m_robot->totalMass() << std::endl;
-  //   std::cerr << ":cog "; rats::print_vector(std::cerr, m_robot->calcCM());
-  //   for(int i = 0; i < m_robot->numJoints(); ++i){
-  //     std::cerr << "(list :" << m_robot->link(i)->name << " "
-  //               << m_robot->joint(i)->jointId << " "
-  //               << m_robot->link(i)->m << " ";
-  //     hrp::Vector3 tmpc = m_robot->link(i)->p + m_robot->link(i)->R * m_robot->link(i)->c;
-  //     rats::print_vector(std::cerr, tmpc, false);
-  //     std::cerr << " ";
-  //     rats::print_vector(std::cerr, m_robot->link(i)->c, false);
-  //     std::cerr << ")" << std::endl;
-  //   }
-  // }
-  // if (loop % 200 == 0) {
-  //   std::cerr << ":IV1 (list ";
-  //   for(int i = 0; i < m_robot->numJoints(); ++i){
-  //     std::cerr << "(list :" << m_robot->joint(i)->name << " " <<  m_robot->joint(i)->u << ")";
-  //   }
-  //   std::cerr << ")" << std::endl;
-  // }
-  hrp::dmatrix contact_mat, contact_mat_inv;
-  std::vector<hrp::Vector3> contact_p;
-  for (size_t j = 0; j < 2; j++) contact_p.push_back(m_robot->sensor<hrp::ForceSensor>(stikp[j].sensor_name)->link->p);
-  calcContactMatrix(contact_mat, contact_p);
-  hrp::calcSRInverse(contact_mat, contact_mat_inv, 0.0);
-  hrp::dvector root_ft(6);
-  for (size_t j = 0; j < 3; j++) root_ft(j) = root_f(j);
-  for (size_t j = 0; j < 3; j++) root_ft(j+3) = root_t(j);
-  hrp::dvector contact_ft(2*6);
-  contact_ft = contact_mat_inv * root_ft;
-  // if (loop%200==0) {
-  //   std::cerr << ":mass " << m_robot->totalMass() << std::endl;
-  //   // std::cerr << ":ftv "; rats::print_vector(std::cerr, ftv);
-  //   // std::cerr << ":aa "; rats::print_matrix(std::cerr, aa);
-  //   // std::cerr << ":dv "; rats::print_vector(std::cerr, dv);
-  // }
-  for (size_t j = 0; j < 2; j++) {
-    hrp::JointPathEx jm = hrp::JointPathEx(m_robot, m_robot->rootLink(), m_robot->sensor<hrp::ForceSensor>(stikp[j].sensor_name)->link, dt);
-    hrp::dmatrix JJ;
-    jm.calcJacobian(JJ);
-    hrp::dvector ft(6);
-    for (size_t i = 0; i < 6; i++) ft(i) = contact_ft(i+j*6);
-    hrp::dvector tq_from_extft(jm.numJoints());
-    tq_from_extft = JJ.transpose() * ft;
-    // if (loop%200==0) {
-    //   std::cerr << ":ft "; rats::print_vector(std::cerr, ft);
-    //   std::cerr << ":JJ "; rats::print_matrix(std::cerr, JJ);
-    //   std::cerr << ":tq_from_extft "; rats::print_vector(std::cerr, tq_from_extft);
-    // }
-    for (size_t i = 0; i < jm.numJoints(); i++) jm.joint(i)->u -= tq_from_extft(i);
-  }
-  //hrp::dmatrix MM(6,m_robot->numJoints());
-  //m_robot->calcMassMatrix(MM);
-  // if (loop % 200 == 0) {
-  //   std::cerr << ":INVDYN2 (list "; rats::print_vector(std::cerr, root_f, false);
-  //   std::cerr << " "; rats::print_vector(std::cerr, root_t, false);
-  //   std::cerr << ")" << std::endl;
-  //   // hrp::dvector tqv(m_robot->numJoints());
-  //   // for(int i = 0; i < m_robot->numJoints(); ++i){p
-  //   //   tqv[m_robot->joint(i)->jointId] = m_robot->joint(i)->u;
-  //   // }
-  //   // std::cerr << ":IV2 "; rats::print_vector(std::cerr, tqv);
-  //   std::cerr << ":IV2 (list ";
-  //   for(int i = 0; i < m_robot->numJoints(); ++i){
-  //     std::cerr << "(list :" << m_robot->joint(i)->name << " " <<  m_robot->joint(i)->u << ")";
-  //   }
-  //   std::cerr << ")" << std::endl;
-  // }
-};
+    if(!idsb.is_initialized){
+      idsb.setInitState(m_robot, dt);
+    }
+//    calcAccelerationsForInverseDynamics(m_robot, idsb);
+    for(int i=0;i<m_robot->numJoints();i++)idsb.q(i) = m_robot->joint(i)->q;
+    idsb.dq.fill(0);
+    idsb.ddq.fill(0);
+    const hrp::Vector3 g(0, 0, 9.80665 * 0.95);
+//    const hrp::Vector3 g(0, 0, 0);// without gravity compansation test
+    idsb.base_p = m_robot->rootLink()->p;
+    idsb.base_v.fill(0);
+    idsb.base_dv = g;
+    idsb.base_R = hrp::Matrix33::Identity();//m_robot->rootLink()->R;
+    idsb.base_dR.fill(0);
+    idsb.base_w_hat.fill(0);
+    idsb.base_w.fill(0);
+    idsb.base_dw.fill(0);
+
+    hrp::Vector3 f_base_wld, t_base_wld;
+    calcRootLinkWrenchFromInverseDynamics(m_robot, idsb, f_base_wld, t_base_wld);
+
+    static std::vector<ContactInfo> civ;
+    if(civ.size() == 0){
+        std::vector<std::vector<Eigen::Vector2d> > fv;
+        szd->get_vertices(fv);
+        if(fv.size()>=2 && fv[0].size()>=4){
+            for(int rl = 0; rl < RL; rl++){
+                for(int i=0; i<fv[rl].size(); i++){
+                    civ.push_back(ContactInfo(m_robot->link(stikp[rl].target_name), stikp[rl].localp + (hrp::Vector3()<<fv[rl][i] * 2,0.0).finished() ));//test
+                }
+            }
+            for(int i=0; i<civ.size();i++){
+                civ[i].world_pos_old_ = civ[i].CalcWorldPos();
+                std::cerr<<"Init ContactInfo: "<<civ[i]<<std::endl;
+            }
+        }
+    }
+
+
+    const double vfloor_h = 0.0;
+
+    //    // calc virtual floor reaction force
+//    for (int i=0; i<civ.size(); i++){
+//        civ[i].CalcWorldPos();
+//        if(civ[i].world_pos_(2) < vfloor_h){
+//            const double pos_err = vfloor_h - civ[i].world_pos_(2);
+//            const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
+//            civ[i].world_f_ << 0, 0, 10000 * pos_err + 1000 * vel_err;
+//            const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
+//            hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
+//            hrp::dmatrix J_contact;
+//            jp.calcJacobian(J_contact, civ[i].local_pos_);
+//            hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
+//            for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
+//        }
+//        civ[i].UpdateState();
+//    }
+
+    // joint limit
+    for(int i=0;i<m_robot->numJoints();i++){
+        const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(5);
+        const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(5);
+        if(m_qCurrent.data[i] > soft_ulimit){
+            m_robot->joint(i)->u -= fabs(m_qCurrent.data[i] - soft_ulimit) * 10;
+        }
+        if(m_qCurrent.data[i] < soft_llimit){
+            m_robot->joint(i)->u += fabs(soft_llimit - m_qCurrent.data[i]) * 10;
+        }
+    }
+
+
+    if(loop%200==0){
+        dbg(vfloor_h);
+        dbg(m_robot->link("RLEG_JOINT5")->p.transpose());
+        dbg(m_robot->link("LLEG_JOINT5")->p.transpose());
+    }
+
+    updateInvDynStateBuffer(idsb);
+}
+//void Stabilizer::calcTorque ()
+//{
+////    for(int i=0;i<m_robot->numJoints();i++){
+////        m_robot->joint(i)->q = m_qCurrent.data[i];
+////    }
+////    m_robot->rootLink()->p = current_root_p;
+////    m_robot->rootLink()->R = hrp::rotFromRpy(act_base_rpy);
+//
+//
+//    if(!idsb.is_initialized){
+//      idsb.setInitState(m_robot, dt);
+//    }
+//    calcAccelerationsForInverseDynamics(m_robot, idsb);
+//    hrp::Vector3 f_base_wld, t_base_wld;
+//    calcRootLinkWrenchFromInverseDynamics(m_robot, idsb, f_base_wld, t_base_wld);
+//    hrp::dvector6 baselink_wrench; baselink_wrench << f_base_wld, t_base_wld;
+//
+//    hrp::dvector6 contact_wrench_from_env[stikp.size()];
+//
+
+//
+//    {
+//        hrp::Vector3 p_base2RF = m_robot->link(stikp[0].target_name)->p+m_robot->link(stikp[0].target_name)->R*stikp[0].localp - m_robot->rootLink()->p;
+//        hrp::Vector3 p_base2LF = m_robot->link(stikp[1].target_name)->p+m_robot->link(stikp[1].target_name)->R*stikp[1].localp - m_robot->rootLink()->p;
+//
+////        hrp::dmatrix Wmat = hrp::dmatrix::Identity(6*2, 6*2);
+//        hrp::dmatrix Gmat = hrp::dmatrix::Zero(6, 6*2);
+//        // f_RF + f_LF = f_base
+//        Gmat.block(0,0,3,3) = Gmat.block(0,6,3,3) = hrp::Matrix33::Identity();
+//        Gmat.block(0,3,3,3) = Gmat.block(0,9,3,3) = hrp::Matrix33::Zero();
+//        // [p_(base->RF) x] f_RF + [p_(base->LF) x] f_LF +t_RF + t_LF = t_base
+//        Gmat.block(3,0,3,3) = hrp::hat(p_base2RF);
+//        Gmat.block(3,6,3,3) = hrp::hat(p_base2LF);
+//        Gmat.block(3,3,3,3) = Gmat.block(3,9,3,3) = hrp::Matrix33::Identity();
+//
+//
+//
+////        for (size_t j = 0; j < 2; j++) {
+////            if (total_wrench_dim == 3) {
+////                Gmat(0,3*j+2) = 1.0;
+////            } else {
+////                for (size_t k = 0; k < 3; k++) Gmat(k,3*j+k) = 1.0;
+////            }
+////        }
+////        for (size_t i = 0; i < total_wrench_dim; i++) {
+////            for (size_t j = 0; j < ee_num; j++) {
+////                if ( i == total_wrench_dim-2 ) { // Nx
+////                    Gmat(i,3*j+1) = -(cop_pos[j](2) - ref_zmp(2));
+////                    Gmat(i,3*j+2) = (cop_pos[j](1) - ref_zmp(1));
+////                } else if ( i == total_wrench_dim-1 ) { // Ny
+////                    Gmat(i,3*j) = (cop_pos[j](2) - ref_zmp(2));
+////                    Gmat(i,3*j+2) = -(cop_pos[j](0) - ref_zmp(0));
+////                }
+////            }
+////        }
+////        for (size_t j = 0; j < 2; j++) {
+////            for (size_t i = 0; i < 3; i++) {
+////                if (i != 2 && 2 == 2)
+////                    Wmat(i+j*3, i+j*3) = 0;
+////                else
+////                    Wmat(i+j*3, i+j*3) = Wmat(i+j*3, i+j*3) * stikp[j].swing_support_gain;
+////            }
+////        }
+//
+//        hrp::dvector Wvec(6*2);
+//        Wvec << hrp::dvector6::Constant(stikp[0].swing_support_gain),hrp::dvector6::Constant(stikp[1].swing_support_gain);
+////        Wvec.segment(3,3) *= 0.01;
+////        Wvec.segment(9,3) *= 0.01;
+////        Wmat.block(0,0,6,6) = hrp::Matrix33::Identity() * stikp[0].swing_support_gain;
+////        Wmat.block(6,6,6,6) = hrp::Matrix33::Identity() * stikp[1].swing_support_gain;
+//
+////        if (printp) {
+////            std::cerr << "[" << print_str << "]   Wmat(diag) = [";
+////            for (size_t j = 0; j < ee_num; j++) {
+////                for (size_t i = 0; i < 3; i++) {
+////                    std::cerr << Wmat(i+j*3, i+j*3) << " ";
+////                }
+////            }
+////            std::cerr << "]" << std::endl;
+////        }
+//
+//        hrp::dvector ret(6*2);
+////        hrp::dvector6 total_wrench;
+//
+//        szd->calcWeightedLinearEquation(ret, Gmat, Wvec.asDiagonal(), baselink_wrench);
+////        for (size_t fidx = 0; fidx < ee_num; fidx++) {
+////            ref_foot_force[fidx] = hrp::Vector3(ret(3*fidx), ret(3*fidx+1), ret(3*fidx+2));
+////            ref_foot_moment[fidx] = hrp::Vector3::Zero();
+////        }
+////         std::cerr << "GmatRef" << std::endl;
+////         std::cerr << Gmat << std::endl;
+//         std::cerr << "WmatRef" << std::endl;
+//         std::cerr << Wvec.transpose() << std::endl;
+//         std::cerr << "ret" << std::endl;
+//         std::cerr << ret.transpose() << std::endl;
+//         contact_wrench_from_env[0] = ret.head(6);
+//         contact_wrench_from_env[1] = ret.tail(6);
+//    }
+//
+//
+//
+//    if(m_contactStates.data[0] && m_contactStates.data[1]){
+//        for(int i=0;i<stikp.size();i++){
+//
+//
+//            contact_wrench_from_env[i] = baselink_wrench/2;
+////            contact_wrench_from_env[i] = moveWrenchWorkingPoint(baselink_wrench/stikp.size(), m_robot->rootLink()->p, m_robot->link(stikp[i].target_name)->p+m_robot->link(stikp[i].target_name)->R*stikp[i].localp);
+//        }
+//
+////        std::cout<<baselink_wrench.transpose()<<std::endl;
+////        std::cout<<contact_wrench_from_env[0].transpose()<<std::endl;
+////        std::cout<<contact_wrench_from_env[1].transpose()<<std::endl;
+//    }else{
+//        for(int i=0;i<stikp.size();i++){
+//            if(m_contactStates.data[i]){
+//
+//                contact_wrench_from_env[i] = baselink_wrench;
+////                contact_wrench_from_env[i] = moveWrenchWorkingPoint(baselink_wrench, m_robot->rootLink()->p, m_robot->link(stikp[i].target_name)->p+m_robot->link(stikp[i].target_name)->R*stikp[i].localp);
+//
+//            }else{
+//
+//                contact_wrench_from_env[i].fill(0);
+//            }
+//        }
+//    }
+//
+//
+//
+//    hrp::Vector3 foot_origin_pos;
+//    hrp::Matrix33 foot_origin_rot;
+//    calcFootOriginCoords (foot_origin_pos, foot_origin_rot);
+//
+//
+//
+////    ikp.ref_moment = foot_origin_rot.transpose() * ikp.ref_moment;
+////    ikp.ref_force = foot_origin_rot.transpose() * ikp.ref_force;
+//
+////    for(int i=0;i<stikp.size();i++){contact_wrench_from_env[i].segment(2,3) << (foot_origin_rot*stikp[i].ref_force)(2), (foot_origin_rot*stikp[i].ref_moment).head(2);}// stikp[i].ref_forceは環境からロボットに加わる力
+////    for(int i=0;i<stikp.size();i++){contact_wrench_from_env[i].segment(2,3) << stikp[i].ref_force(2), stikp[i].ref_moment.head(2);}// stikp[i].ref_forceは環境からロボットに加わる力
+////    for(int i=0;i<stikp.size();i++){contact_wrench_from_env[i] << stikp[i].ref_force, stikp[i].ref_moment;}// stikp[i].ref_forceは環境からロボットに加わる力
+////            std::cout<<baselink_wrench.transpose()<<std::endl;
+//    //    std::cout<<contact_wrench_from_env[0].transpose()<<std::endl;
+//    //    std::cout<<contact_wrench_from_env[1].transpose()<<std::endl;
+//
+//    //std::cout<<contact_wrench_from_env[0].transpose()<<std::endl;
+//
+//
+//
+////    hrp::dvector6 contact_wrench_from_env_rel_foot_origin_coords[stikp.size()];
+////    for(int i=0; i<stikp.size();i++){
+////        contact_wrench_from_env_rel_foot_origin_coords[i].head(3) = contact_wrench_from_env[i].head(3);
+////        contact_wrench_from_env_rel_foot_origin_coords[i].tail(3) = contact_wrench_from_env[i].tail(3) - foot_origin_pos.cross((hrp::Vector3)contact_wrench_from_env_rel_foot_origin_coords[i].head(3));
+////        contact_wrench_from_env_rel_foot_origin_coords[i].head(3) = foot_origin_rot.transpose() * contact_wrench_from_env_rel_foot_origin_coords[i].head(3);
+////        contact_wrench_from_env_rel_foot_origin_coords[i].tail(3) = foot_origin_rot.transpose() * contact_wrench_from_env_rel_foot_origin_coords[i].tail(3);
+////    }
+////
+////
+////    for(int i=0;i<stikp.size();i++){contact_wrench_from_env_rel_foot_origin_coords[i].segment(2,3) << stikp[i].ref_force(2), stikp[i].ref_moment.head(2);}// stikp[i].ref_forceは環境からロボットに加わる力
+////
+////    std::cout<<contact_wrench_from_env_rel_foot_origin_coords[0].transpose()<<std::endl;
+////    std::cout<<contact_wrench_from_env_rel_foot_origin_coords[1].transpose()<<std::endl;
+//
+//
+////    contact_wrench_from_env[0] = ret.head(6);
+////    contact_wrench_from_env[1] = ret.tail(6);
+//
+//
+//    for (int i=0; i<stikp.size(); i++){
+//        hrp::JointPathEx jm = hrp::JointPathEx(m_robot, m_robot->rootLink(), m_robot->sensor<hrp::ForceSensor>(stikp[i].sensor_name)->link, dt);
+//        hrp::dmatrix JJ;
+//        jm.calcJacobian(JJ,stikp[i].localp);
+//
+////        hrp::dvector6 contact_wrench_from_env_rel_base;
+////        contact_wrench_from_env_rel_base.head(3) = m_robot->rootLink()->R.transpose() * foot_origin_rot * contact_wrench_from_env_rel_foot_origin_coords[i].head(3);
+////        contact_wrench_from_env_rel_base.tail(3) = m_robot->rootLink()->R.transpose() * foot_origin_rot * contact_wrench_from_env_rel_foot_origin_coords[i].tail(3);
+//
+//
+//
+//        hrp::dvector6 tmp;
+//        tmp << foot_origin_rot.transpose() * contact_wrench_from_env[i].head(3), foot_origin_rot.transpose() * contact_wrench_from_env[i].tail(3);
+//        tmp.segment(2,3) << stikp[i].ref_force(2), stikp[i].ref_moment.head(2);
+//        std::cout<<tmp.transpose()<<std::endl;
+//
+//        tmp << m_robot->rootLink()->R.transpose() * foot_origin_rot * tmp.head(3), m_robot->rootLink()->R.transpose() * foot_origin_rot * tmp.tail(3);
+//
+//        hrp::dvector tq_for_extft = JJ.transpose() * (-tmp);
+//        for (int j = 0; j < jm.numJoints(); j++) jm.joint(j)->u += tq_for_extft(j);
+//    }
+//
+//
+//    updateInvDynStateBuffer(idsb);
+//}
+
+//void Stabilizer::calcTorque ()
+//{
+//  m_robot->calcForwardKinematics();
+//  // buffers for the unit vector method
+//  hrp::Vector3 root_w_x_v;
+//  hrp::Vector3 g(0, 0, 9.80665);
+//  root_w_x_v = m_robot->rootLink()->w.cross(m_robot->rootLink()->vo + m_robot->rootLink()->w.cross(m_robot->rootLink()->p));
+//  m_robot->rootLink()->dvo = g - root_w_x_v;   // dv = g, dw = 0
+//  m_robot->rootLink()->dw.setZero();
+//
+//  hrp::Vector3 root_f;
+//  hrp::Vector3 root_t;
+//  m_robot->calcInverseDynamics(m_robot->rootLink(), root_f, root_t);
+//  // if (loop % 200 == 0) {
+//  //   std::cerr << ":mass " << m_robot->totalMass() << std::endl;
+//  //   std::cerr << ":cog "; rats::print_vector(std::cerr, m_robot->calcCM());
+//  //   for(int i = 0; i < m_robot->numJoints(); ++i){
+//  //     std::cerr << "(list :" << m_robot->link(i)->name << " "
+//  //               << m_robot->joint(i)->jointId << " "
+//  //               << m_robot->link(i)->m << " ";
+//  //     hrp::Vector3 tmpc = m_robot->link(i)->p + m_robot->link(i)->R * m_robot->link(i)->c;
+//  //     rats::print_vector(std::cerr, tmpc, false);
+//  //     std::cerr << " ";
+//  //     rats::print_vector(std::cerr, m_robot->link(i)->c, false);
+//  //     std::cerr << ")" << std::endl;
+//  //   }
+//  // }
+//  // if (loop % 200 == 0) {
+//  //   std::cerr << ":IV1 (list ";
+//  //   for(int i = 0; i < m_robot->numJoints(); ++i){
+//  //     std::cerr << "(list :" << m_robot->joint(i)->name << " " <<  m_robot->joint(i)->u << ")";
+//  //   }
+//  //   std::cerr << ")" << std::endl;
+//  // }
+//  hrp::dmatrix contact_mat, contact_mat_inv;
+//  std::vector<hrp::Vector3> contact_p;
+//  for (size_t j = 0; j < 2; j++) contact_p.push_back(m_robot->sensor<hrp::ForceSensor>(stikp[j].sensor_name)->link->p);
+//  calcContactMatrix(contact_mat, contact_p);
+//  hrp::calcSRInverse(contact_mat, contact_mat_inv, 0.0);
+//  hrp::dvector root_ft(6);
+//  for (size_t j = 0; j < 3; j++) root_ft(j) = root_f(j);
+//  for (size_t j = 0; j < 3; j++) root_ft(j+3) = root_t(j);
+//  hrp::dvector contact_ft(2*6);
+//  contact_ft = contact_mat_inv * root_ft;
+//  // if (loop%200==0) {
+//  //   std::cerr << ":mass " << m_robot->totalMass() << std::endl;
+//  //   // std::cerr << ":ftv "; rats::print_vector(std::cerr, ftv);
+//  //   // std::cerr << ":aa "; rats::print_matrix(std::cerr, aa);
+//  //   // std::cerr << ":dv "; rats::print_vector(std::cerr, dv);
+//  // }
+//  for (size_t j = 0; j < 2; j++) {
+//    hrp::JointPathEx jm = hrp::JointPathEx(m_robot, m_robot->rootLink(), m_robot->sensor<hrp::ForceSensor>(stikp[j].sensor_name)->link, dt);
+//    hrp::dmatrix JJ;
+//    jm.calcJacobian(JJ);
+//    hrp::dvector ft(6);
+//    for (size_t i = 0; i < 6; i++) ft(i) = contact_ft(i+j*6);
+//    hrp::dvector tq_from_extft(jm.numJoints());
+//    tq_from_extft = JJ.transpose() * ft;
+//    // if (loop%200==0) {
+//    //   std::cerr << ":ft "; rats::print_vector(std::cerr, ft);
+//    //   std::cerr << ":JJ "; rats::print_matrix(std::cerr, JJ);
+//    //   std::cerr << ":tq_from_extft "; rats::print_vector(std::cerr, tq_from_extft);
+//    // }
+//    for (size_t i = 0; i < jm.numJoints(); i++) jm.joint(i)->u -= tq_from_extft(i);
+//  }
+//  //hrp::dmatrix MM(6,m_robot->numJoints());
+//  //m_robot->calcMassMatrix(MM);
+//  // if (loop % 200 == 0) {
+//  //   std::cerr << ":INVDYN2 (list "; rats::print_vector(std::cerr, root_f, false);
+//  //   std::cerr << " "; rats::print_vector(std::cerr, root_t, false);
+//  //   std::cerr << ")" << std::endl;
+//  //   // hrp::dvector tqv(m_robot->numJoints());
+//  //   // for(int i = 0; i < m_robot->numJoints(); ++i){p
+//  //   //   tqv[m_robot->joint(i)->jointId] = m_robot->joint(i)->u;
+//  //   // }
+//  //   // std::cerr << ":IV2 "; rats::print_vector(std::cerr, tqv);
+//  //   std::cerr << ":IV2 (list ";
+//  //   for(int i = 0; i < m_robot->numJoints(); ++i){
+//  //     std::cerr << "(list :" << m_robot->joint(i)->name << " " <<  m_robot->joint(i)->u << ")";
+//  //   }
+//  //   std::cerr << ")" << std::endl;
+//  // }
+//};
 
 extern "C"
 {
