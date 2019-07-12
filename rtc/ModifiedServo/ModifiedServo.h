@@ -1,29 +1,30 @@
 // -*- C++ -*-
 /*!
- * @file  SoftErrorLimiter.h
- * @brief null component
- * @date  $Date$
+ * @file  ModifiedServo.h
+ * @brief ModifiedServo component
+ * @date  $Date$ 
  *
- * $Id$
+ * $Id$ 
  */
 
-#ifndef SOFT_ERROR_LIMITER_H
-#define SOFT_ERROR_LIMITER_H
+#ifndef MODIFIEDSERVO_H
+#define MODIFIEDSERVO_H
 
-#include <rtm/idl/BasicDataType.hh>
-#include "hrpsys/idl/HRPDataTypes.hh"
+#include <rtm/idl/BasicDataTypeSkel.h>
 #include <rtm/Manager.h>
 #include <rtm/DataFlowComponentBase.h>
 #include <rtm/CorbaPort.h>
+#include <rtm/CorbaNaming.h>
 #include <rtm/DataInPort.h>
 #include <rtm/DataOutPort.h>
-#include <rtm/idl/BasicDataTypeSkel.h>
-#include "JointLimitTable.h"
+
+#include <hrpUtil/EigenTypes.h>
+#include <hrpModel/ModelLoaderUtil.h>
+#include <hrpModel/Body.h>
+#include <hrpModel/Link.h>
 
 // Service implementation headers
 // <rtc-template block="service_impl_h">
-#include "SoftErrorLimiterService_impl.h"
-#include "beep.h"
 
 // </rtc-template>
 
@@ -34,30 +35,19 @@
 
 using namespace RTC;
 
-/**
-   \brief sample RT component which has one data input port and one data output port
- */
-class SoftErrorLimiter
-  : public RTC::DataFlowComponentBase
+class ModifiedServo  : public RTC::DataFlowComponentBase
 {
  public:
-  /**
-     \brief Constructor
-     \param manager pointer to the Manager
-  */
-  SoftErrorLimiter(RTC::Manager* manager);
-  /**
-     \brief Destructor
-  */
-  virtual ~SoftErrorLimiter();
+  ModifiedServo(RTC::Manager* manager);
+  ~ModifiedServo();
 
   // The initialize action (on CREATED->ALIVE transition)
-  // formaer rtc_init_entry()
+  // formaer rtc_init_entry() 
   virtual RTC::ReturnCode_t onInitialize();
 
   // The finalize action (on ALIVE->END transition)
   // formaer rtc_exiting_entry()
-  //virtual RTC::ReturnCode_t onFinalize();
+  // virtual RTC::ReturnCode_t onFinalize();
 
   // The startup action when ExecutionContext startup
   // former rtc_starting_entry()
@@ -90,7 +80,7 @@ class SoftErrorLimiter
   // The reset action that is invoked resetting
   // This is same but different the former rtc_init_entry()
   // virtual RTC::ReturnCode_t onReset(RTC::UniqueId ec_id);
-
+  
   // The state update action that is invoked after onExecute() action
   // no corresponding operation exists in OpenRTm-aist-0.2.0
   // virtual RTC::ReturnCode_t onStateUpdate(RTC::UniqueId ec_id);
@@ -106,61 +96,66 @@ class SoftErrorLimiter
   
   // </rtc-template>
 
-  TimedDoubleSeq m_qRef;
-  TimedDoubleSeq m_qCurrent;
-  OpenHRP::TimedLongSeqSeq m_servoState;
-  TimedLongSeq m_beepCommand;
-
   // DataInPort declaration
   // <rtc-template block="inport_declare">
+  TimedDoubleSeq m_tauRef;
+  InPort<TimedDoubleSeq> m_tauRefIn;
+  TimedDoubleSeq m_qRef;
   InPort<TimedDoubleSeq> m_qRefIn;
-  InPort<TimedDoubleSeq> m_qCurrentIn;
-  InPort<OpenHRP::TimedLongSeqSeq> m_servoStateIn;
-  
+  TimedDoubleSeq m_q;
+  InPort<TimedDoubleSeq> m_qIn;
+  TimedBooleanSeq m_torqueMode;
+  InPort<TimedBooleanSeq> m_torqueModeIn;
+
   // </rtc-template>
 
   // DataOutPort declaration
   // <rtc-template block="outport_declare">
-  OutPort<TimedDoubleSeq> m_qOut;
-  OutPort<OpenHRP::TimedLongSeqSeq> m_servoStateOut;
-  OutPort<TimedLongSeq> m_beepCommandOut;
-  
+  TimedDoubleSeq m_tau;
+  OutPort<TimedDoubleSeq> m_tauOut;
+
   // </rtc-template>
 
   // CORBA Port declaration
   // <rtc-template block="corbaport_declare">
-  RTC::CorbaPort m_SoftErrorLimiterServicePort;
-  
+
   // </rtc-template>
 
   // Service declaration
   // <rtc-template block="service_declare">
-  SoftErrorLimiterService_impl m_service0;
-  
+
   // </rtc-template>
 
   // Consumer declaration
   // <rtc-template block="consumer_declare">
-  
+
   // </rtc-template>
 
  private:
-  boost::shared_ptr<robot> m_robot;
-  std::map<std::string, hrp::JointLimitTable> joint_limit_tables;
-  std::vector<bool> m_joint_mask;
-  unsigned int m_debugLevel;
-  int dummy, position_limit_error_beep_freq, soft_limit_error_beep_freq, debug_print_freq;
-  double dt;
-  BeepClient bc;
-  // Since this RTC is stable RTC, we support both direct beeping from this RTC and beepring through BeeperRTC.
-  // If m_beepCommand is connected to BeeperRTC, is_beep_port_connected is true.
-  bool is_beep_port_connected;
+
+  void readGainFile();
+
+  hrp::BodyPtr m_robot;
+  
+  double dt;      // sampling time of the controller
+  double ref_dt;  // sampling time of reference angles
+  double step;    // current interpolation step
+  double nstep;   // number of steps to interpolate references
+
+  size_t dof;
+
+  std::string gain_fname;
+  std::ifstream gain;
+
+  hrp::dvector Pgain, Dgain;
+  hrp::dvector q_old, qRef_old;
 };
 
 
 extern "C"
 {
-  void SoftErrorLimiterInit(RTC::Manager* manager);
+  DLL_EXPORT void ModifiedServoInit(RTC::Manager* manager);
 };
 
-#endif // SOFT_ERROR_LIMITER_H
+#endif // MODIFIEDSERVO_H
+

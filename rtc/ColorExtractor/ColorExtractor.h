@@ -1,29 +1,28 @@
 // -*- C++ -*-
 /*!
- * @file  SoftErrorLimiter.h
- * @brief null component
+ * @file  ColorExtractor.h
+ * @brief rotate image component
  * @date  $Date$
  *
  * $Id$
  */
 
-#ifndef SOFT_ERROR_LIMITER_H
-#define SOFT_ERROR_LIMITER_H
+#ifndef COLOR_EXTRACTOR_H
+#define COLOR_EXTRACTOR_H
 
 #include <rtm/idl/BasicDataType.hh>
-#include "hrpsys/idl/HRPDataTypes.hh"
+#include <rtm/idl/ExtendedDataTypes.hh>
+#include "hrpsys/idl/Img.hh"
 #include <rtm/Manager.h>
 #include <rtm/DataFlowComponentBase.h>
 #include <rtm/CorbaPort.h>
 #include <rtm/DataInPort.h>
 #include <rtm/DataOutPort.h>
 #include <rtm/idl/BasicDataTypeSkel.h>
-#include "JointLimitTable.h"
+#include <cv.h>
 
 // Service implementation headers
 // <rtc-template block="service_impl_h">
-#include "SoftErrorLimiterService_impl.h"
-#include "beep.h"
 
 // </rtc-template>
 
@@ -35,9 +34,9 @@
 using namespace RTC;
 
 /**
-   \brief sample RT component which has one data input port and one data output port
+   \brief RT component which resize an input image
  */
-class SoftErrorLimiter
+class ColorExtractor
   : public RTC::DataFlowComponentBase
 {
  public:
@@ -45,11 +44,11 @@ class SoftErrorLimiter
      \brief Constructor
      \param manager pointer to the Manager
   */
-  SoftErrorLimiter(RTC::Manager* manager);
+  ColorExtractor(RTC::Manager* manager);
   /**
      \brief Destructor
   */
-  virtual ~SoftErrorLimiter();
+  virtual ~ColorExtractor();
 
   // The initialize action (on CREATED->ALIVE transition)
   // formaer rtc_init_entry()
@@ -57,7 +56,7 @@ class SoftErrorLimiter
 
   // The finalize action (on ALIVE->END transition)
   // formaer rtc_exiting_entry()
-  //virtual RTC::ReturnCode_t onFinalize();
+  // virtual RTC::ReturnCode_t onFinalize();
 
   // The startup action when ExecutionContext startup
   // former rtc_starting_entry()
@@ -106,36 +105,31 @@ class SoftErrorLimiter
   
   // </rtc-template>
 
-  TimedDoubleSeq m_qRef;
-  TimedDoubleSeq m_qCurrent;
-  OpenHRP::TimedLongSeqSeq m_servoState;
-  TimedLongSeq m_beepCommand;
+  Img::TimedCameraImage m_original;
 
   // DataInPort declaration
   // <rtc-template block="inport_declare">
-  InPort<TimedDoubleSeq> m_qRefIn;
-  InPort<TimedDoubleSeq> m_qCurrentIn;
-  InPort<OpenHRP::TimedLongSeqSeq> m_servoStateIn;
+  InPort<Img::TimedCameraImage> m_originalIn;
   
   // </rtc-template>
 
+  Img::TimedCameraImage m_result;
+  RTC::TimedPoint2D m_pos;
+
   // DataOutPort declaration
   // <rtc-template block="outport_declare">
-  OutPort<TimedDoubleSeq> m_qOut;
-  OutPort<OpenHRP::TimedLongSeqSeq> m_servoStateOut;
-  OutPort<TimedLongSeq> m_beepCommandOut;
+  OutPort<Img::TimedCameraImage> m_resultOut;
+  OutPort<RTC::TimedPoint2D> m_posOut;
   
   // </rtc-template>
 
   // CORBA Port declaration
   // <rtc-template block="corbaport_declare">
-  RTC::CorbaPort m_SoftErrorLimiterServicePort;
   
   // </rtc-template>
 
   // Service declaration
   // <rtc-template block="service_declare">
-  SoftErrorLimiterService_impl m_service0;
   
   // </rtc-template>
 
@@ -145,22 +139,16 @@ class SoftErrorLimiter
   // </rtc-template>
 
  private:
-  boost::shared_ptr<robot> m_robot;
-  std::map<std::string, hrp::JointLimitTable> joint_limit_tables;
-  std::vector<bool> m_joint_mask;
-  unsigned int m_debugLevel;
-  int dummy, position_limit_error_beep_freq, soft_limit_error_beep_freq, debug_print_freq;
-  double dt;
-  BeepClient bc;
-  // Since this RTC is stable RTC, we support both direct beeping from this RTC and beepring through BeeperRTC.
-  // If m_beepCommand is connected to BeeperRTC, is_beep_port_connected is true.
-  bool is_beep_port_connected;
+  IplImage *m_img;
+  int m_minPixels;
+  std::vector<int> m_rgbRegion;
+  int dummy;
 };
 
 
 extern "C"
 {
-  void SoftErrorLimiterInit(RTC::Manager* manager);
+  void ColorExtractorInit(RTC::Manager* manager);
 };
 
-#endif // SOFT_ERROR_LIMITER_H
+#endif // COLOR_EXTRACTOR_H
