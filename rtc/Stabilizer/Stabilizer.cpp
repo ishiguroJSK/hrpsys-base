@@ -2787,7 +2787,63 @@ class ContactInfo{
         }
 };
 
+///MyUtilsenum
+enum { R, L, LR };
+enum {X, Y, Z}; //already exist in RobotHardware/defs.h?
+enum { XY = 2 };
+enum { XYZ = 3 };
+enum { r, p, y, rpy };
+enum { fx, fy, fz, tx, ty, tz, ft_xyz };
+enum { com, rf, lf, rh, lh, head, zmp, num_pose_tgt };
+enum { num_ee_tgt=4 };
 #define dbg(var) std::cout<<#var"= "<<(var)<<std::endl
+#define dbgn(var) std::cout<<#var"= "<<std::endl<<(var)<<std::endl
+#define dbgv(var) std::cout<<#var"= "<<(var.transpose())<<std::endl
+#define LIMIT_MINMAX(x,min,max) ((x= (x<min  ? min : x<max ? x : max)))
+namespace hrp{
+    class Pose3{
+        public:
+            EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+            hrp::Vector3 p;
+            hrp::Matrix33 R;
+            Pose3()                                                                                                             { reset();}
+            Pose3(const double& _X, const double& _Y, const double& _Z, const double& _r, const double& _p, const double& _y)   { p << _X,_Y,_Z; R = hrp::rotFromRpy(_r,_p,_y); }
+            Pose3(const hrp::dvector6& _xyz_rpy)                                                                                { p = _xyz_rpy.head(3); R = hrp::rotFromRpy(_xyz_rpy.tail(3)); }
+            Pose3(const hrp::Vector3& _xyz, const hrp::Vector3& _rpy)                                                           { p = _xyz; R = hrp::rotFromRpy(_rpy); }
+            Pose3(const hrp::Vector3& _xyz, const hrp::Matrix33& _R)                                                            { p = _xyz; R = _R; }
+            void reset()                                                                                                        { p.fill(0); R.setIdentity(); }
+            hrp::Vector3 rpy() const                                                                                            { return hrp::rpyFromRot(R); }
+            hrp::dvector6 to_dvector6() const                                                                                   { return (hrp::dvector6() << p, hrp::rpyFromRot(R)).finished(); }
+            void setRpy(const double& _r, const double& _p, const double& _y)                                                   { R = rotFromRpy(_r,_p,_y); }
+            void setRpy(const hrp::Vector3& _rpy)                                                                               { R = rotFromRpy(_rpy); }
+    };
+
+    inline hrp::Vector3         to_Vector3      (const RTC::Point3D& in)        { return hrp::Vector3(in.x, in.y, in.z); }
+    inline hrp::Vector3         to_Vector3      (const RTC::Orientation3D& in)  { return hrp::Vector3(in.r, in.p, in.y); }
+    inline hrp::dvector6        to_dvector6     (const RTC::Pose3D& in)         { return (hrp::dvector6() << in.position.x, in.position.y, in.position.z, in.orientation.r, in.orientation.p, in.orientation.y).finished(); }
+    inline hrp::Pose3           to_Pose3        (const RTC::Pose3D& in)         { return hrp::Pose3(in.position.x, in.position.y, in.position.z, in.orientation.r, in.orientation.p, in.orientation.y); }
+//    inline hrp::dvector6        to_dvector6     (const OpenHRP::Wrench& in)     { return (hrp::dvector6() << in.force.x, in.force.y, in.force.z, in.torque.x, in.torque.y, in.torque.z).finished(); }
+    inline hrp::dvector         to_dvector      (const RTC::TimedDoubleSeq::_data_seq& in) { return hrp::dvector::Map(in.get_buffer(), in.length()); }
+//    inline std::vector<std::string> to_string_vector (const OpenHRP::WholeBodyMasterSlaveService::StrSequence& in) { std::vector<std::string> ret(in.length()); for(int i=0; i<in.length(); i++){ ret[i] = in[i]; } return ret; }
+
+    inline RTC::Point3D         to_Point3D      (const hrp::Vector3& in)        { return (RTC::Point3D){in(X),in(Y),in(Z)}; }
+    inline RTC::Orientation3D   to_Orientation3D(const hrp::Vector3& in)        { return (RTC::Orientation3D){in(X),in(Y),in(Z)}; }
+    inline RTC::Pose3D          to_Pose3D       (const hrp::dvector6& in)       { return (RTC::Pose3D){in(X),in(Y),in(Z),in(r),in(p),in(y)}; }
+    inline RTC::Pose3D          to_Pose3D       (const hrp::Pose3& in)          { return (RTC::Pose3D){in.p(X),in.p(Y),in.p(Z),in.rpy()(r),in.rpy()(p),in.rpy()(y)}; }
+//    inline OpenHRP::Wrench      to_Wrench       (const hrp::dvector6& in)       { return (OpenHRP::Wrench){in(X),in(Y),in(Z),in(r),in(p),in(y)}; }
+    inline RTC::TimedDoubleSeq::_data_seq                       to_DoubleSeq    (const hrp::dvector& in)            { RTC::TimedDoubleSeq::_data_seq out(in.size()); hrp::dvector::Map(out.get_buffer(), in.size()) = in; return out; }
+//    inline OpenHRP::WholeBodyMasterSlaveService::StrSequence    to_StrSequence  (const std::vector<std::string>& in){ OpenHRP::WholeBodyMasterSlaveService::StrSequence ret; ret.length(in.size()); for(int i=0; i<in.size(); i++){ ret[i] = in[i].c_str(); } return ret; }
+
+    inline hrp::dvector getQAll         (const hrp::BodyPtr _robot){ hrp::dvector tmp(_robot->numJoints()); for(int i=0;i<_robot->numJoints();i++){ tmp(i) = _robot->joint(i)->q; } return tmp; }
+    inline void         setQAll         (hrp::BodyPtr       _robot, const hrp::dvector& in){ assert(in.size() <= _robot->numJoints()); for(int i=0;i<_robot->numJoints();i++){ _robot->joint(i)->q = in(i); } }
+    inline hrp::dvector getRobotStateVec(const hrp::BodyPtr _robot){ return (hrp::dvector(_robot->numJoints()+6) << getQAll(_robot), _robot->rootLink()->p, hrp::rpyFromRot(_robot->rootLink()->R)).finished(); }
+    inline void         setRobotStateVec(hrp::BodyPtr       _robot, const hrp::dvector& _q_bpos_brpy){ assert(_q_bpos_brpy.size() == _robot->numJoints()+6); for(int i=0;i<_robot->numJoints();i++){ _robot->joint(i)->q = _q_bpos_brpy(i); }; _robot->rootLink()->p = _q_bpos_brpy.tail(6).head(3); _robot->rootLink()->R = hrp::rotFromRpy(_q_bpos_brpy.tail(6).tail(3)); }
+    inline void         setRobotStateVec(hrp::BodyPtr       _robot, const hrp::dvector& _q, const hrp::Vector3& _bpos, const hrp::Vector3& _brpy){ assert(_q.size() == _robot->numJoints()); for(int i=0;i<_robot->numJoints();i++){ _robot->joint(i)->q = _q(i); }; _robot->rootLink()->p = _bpos; _robot->rootLink()->R = hrp::rotFromRpy(_brpy); }
+    inline void         setRobotStateVec(hrp::BodyPtr       _robot, const hrp::dvector& _q, const hrp::Vector3& _bpos, const hrp::Matrix33& _bR){ assert(_q.size() == _robot->numJoints()); for(int i=0;i<_robot->numJoints();i++){ _robot->joint(i)->q = _q(i); }; _robot->rootLink()->p = _bpos; _robot->rootLink()->R = _bR; }
+    inline std::vector<std::string> getJointNameAll (const hrp::BodyPtr _robot){ std::vector<std::string> ret(_robot->numJoints()); for(int i=0;i<_robot->numJoints();i++){ ret[i] = _robot->joint(i)->name; } return ret; }
+
+    inline hrp::dvector getUAll         (const hrp::BodyPtr _robot){ hrp::dvector tmp(_robot->numJoints()); for(int i=0;i<_robot->numJoints();i++){ tmp(i) = _robot->joint(i)->u; } return tmp; }
+}
 
 void Stabilizer::calcTorque ()
 {
@@ -2802,8 +2858,7 @@ void Stabilizer::calcTorque ()
     for(int i=0;i<m_robot->numJoints();i++)idsb.q(i) = m_robot->joint(i)->q;
     idsb.dq.fill(0);
     idsb.ddq.fill(0);
-    const hrp::Vector3 g(0, 0, 9.80665 * 0.95);
-//    const hrp::Vector3 g(0, 0, 0);// without gravity compansation test
+    const hrp::Vector3 g(0, 0, 9.80665 * 0.8);
     idsb.base_p = m_robot->rootLink()->p;
     idsb.base_v.fill(0);
     idsb.base_dv = g;
@@ -2816,89 +2871,42 @@ void Stabilizer::calcTorque ()
     hrp::Vector3 f_base_wld, t_base_wld;
     calcRootLinkWrenchFromInverseDynamics(m_robot, idsb, f_base_wld, t_base_wld);
 
+    if(loop%500==0)std::cerr<<"ref_torque is"<<std::endl;
+    if(loop%500==0)dbgv(hrp::getUAll(m_robot));
+
     static std::vector<ContactInfo> civ;
-    
-    if(civ.size() != 8){
-        civ.resize(8);
-        civ[0] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.4,  0.2, 0) );
-        civ[1] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.4, -0.2, 0) );
-        civ[2] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.4,  0.2, 0) );
-        civ[3] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.4, -0.2, 0) );
-        civ[4] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.4,  0.2, 0) );
-        civ[5] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.4, -0.2, 0) );
-        civ[6] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.4,  0.2, 0) );
-        civ[7] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.4, -0.2, 0) );
+    if(civ.size() != 4*4){
+        civ.resize(4*4);
+        const double a = 2;
+        civ[0] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
+        civ[1] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
+        civ[2] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
+        civ[3] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
+        civ[4] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
+        civ[5] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
+        civ[6] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
+        civ[7] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
 
+        civ[8] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
+        civ[9] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
+        civ[10] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
+        civ[11] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
+        civ[12] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
+        civ[13] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
+        civ[14] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
+        civ[15] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
     }
-    // if(civ.size() == 0){
-    //     std::vector<std::vector<Eigen::Vector2d> > fv;
-    //     szd->get_vertices(fv);
-    //     if(fv.size()>=2 && fv[0].size()>=4){
-    //         for(int rl = 0; rl < RL; rl++){
-    //             for(int i=0; i<fv[rl].size(); i++){
-    //                 civ.push_back(ContactInfo(m_robot->link(stikp[rl].target_name), stikp[rl].localp + (hrp::Vector3()<<fv[rl][i] * 10, 0.0).finished() ));//test
-    //             }
-    //         }
-    //         for(int i=0; i<civ.size();i++){
-    //             civ[i].world_pos_old_ = civ[i].CalcWorldPos();
-    //             std::cerr<<"Init ContactInfo: "<<civ[i]<<std::endl;
-    //         }
-    //     }
-    // }
 
-    // szd->get_vertices()はSetParam()されてない時点では不定だから更新し続けないと・・・
-    //std::vector<ContactInfo> civ;
-    // std::vector<std::vector<Eigen::Vector2d> > fv;
-    // szd->get_vertices(fv);
-    // for(int rl = 0; rl < RL; rl++){
-    //     for(int i=0; i<fv[rl].size(); i++){
-    //         civ[4*rl + i] = (ContactInfo(m_robot->link(stikp[rl].target_name), stikp[rl].localp + (hrp::Vector3()<<fv[rl][i] * 10, 0.0).finished() ));//test
-    //     }
-    // }
-
-    if(loop%100==0){
-    dbg(civ[0].local_pos_.transpose());
-    dbg(civ[1].local_pos_.transpose());
-    dbg(civ[2].local_pos_.transpose());
-    dbg(civ[3].local_pos_.transpose());
-    dbg(civ[4].local_pos_.transpose());
-    dbg(civ[5].local_pos_.transpose());
-    dbg(civ[6].local_pos_.transpose());
-    dbg(civ[7].local_pos_.transpose());
-
-    dbg(civ[0].world_pos_.transpose());
-    dbg(civ[1].world_pos_.transpose());
-    dbg(civ[2].world_pos_.transpose());
-    dbg(civ[3].world_pos_.transpose());
-    dbg(civ[4].world_pos_.transpose());
-    dbg(civ[5].world_pos_.transpose());
-    dbg(civ[6].world_pos_.transpose());
-    dbg(civ[7].world_pos_.transpose());
-
-    
-    dbg(civ[0].world_f_.transpose());
-    dbg(civ[1].world_f_.transpose());
-    dbg(civ[2].world_f_.transpose());
-    dbg(civ[3].world_f_.transpose());
-    dbg(civ[4].world_f_.transpose());
-    dbg(civ[5].world_f_.transpose());
-    dbg(civ[6].world_f_.transpose());
-    dbg(civ[7].world_f_.transpose());
-    }
-                
-    // dbg(stikp[1].localp.transpose());
-    // dbg(fv[1][0].transpose());
-    // dbg(fv[1][1].transpose());
-    // dbg(fv[1][2].transpose());
-    // dbg(fv[1][3].transpose());
-
-
-
-    const double vfloor_h = -1.2;
 
     //    // calc virtual floor reaction force
     for (int i=0; i<civ.size(); i++){
        civ[i].CalcWorldPos();
+       double vfloor_h;
+       if(civ[i].target_link_->name.find("LEG") != std::string::npos){
+           vfloor_h = m_robot->rootLink()->p(Z) - 1.0;
+       }else{
+           vfloor_h = m_robot->rootLink()->p(Z) + 0.0;
+       }
        if(civ[i].world_pos_(2) < vfloor_h){
            const double pos_err = vfloor_h - civ[i].world_pos_(2);
            const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
@@ -2915,28 +2923,37 @@ void Stabilizer::calcTorque ()
        }
        civ[i].UpdateState();
     }
+    if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
 
+    static hrp::dvector q_old(hrp::to_dvector(m_qCurrent.data));
+
+    hrp::dvector q_vel = (hrp::to_dvector(m_qCurrent.data) - q_old)/0.002;
     // joint limit
     for(int i=0;i<m_robot->numJoints();i++){
         const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(15);
         const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(15);
+        double soft_jlimit_tq = 0;
+
         if(m_qCurrent.data[i] > soft_ulimit){
-            m_robot->joint(i)->u -= fabs(m_qCurrent.data[i] - soft_ulimit) * 100;
-            //dbg(fabs(m_qCurrent.data[i] - soft_ulimit) * 100);
+            soft_jlimit_tq = 100 * (soft_ulimit - m_qCurrent.data[i]) + 10 * (0 - q_vel(i));
         }
         if(m_qCurrent.data[i] < soft_llimit){
-            m_robot->joint(i)->u += fabs(soft_llimit - m_qCurrent.data[i]) * 100;
-            //dbg(fabs(soft_llimit - m_qCurrent.data[i]) * 100);
+            soft_jlimit_tq = 100 * (soft_llimit - m_qCurrent.data[i]) + 10 * (0 - q_vel(i));
         }
+
+        LIMIT_MINMAX(soft_jlimit_tq, -30,30);
+        m_robot->joint(i)->u += soft_jlimit_tq;
     }
+    q_old = hrp::to_dvector(m_qCurrent.data);
+    if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
 
-    if(loop%200==0){
-        dbg(vfloor_h);
-        dbg(m_robot->link("RLEG_JOINT5")->p.transpose());
-        dbg(m_robot->link("LLEG_JOINT5")->p.transpose());
-    }
+//    if(loop%200==0){
+//        dbg(m_robot->rootLink()->p(Z));
+//        dbg(m_robot->link("RLEG_JOINT5")->p.transpose());
+//        dbg(m_robot->link("LLEG_JOINT5")->p.transpose());
+//    }
 
     updateInvDynStateBuffer(idsb);
 }
