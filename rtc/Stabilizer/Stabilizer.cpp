@@ -2761,9 +2761,10 @@ static hrp::dvector6 moveWrenchWorkingPoint(const hrp::dvector6& wrench_from, co
 class ContactInfo{
     private:
     public:
-        ContactInfo(hrp::Link* l, const hrp::Vector3& lp)
+    ContactInfo(hrp::Link* l, const hrp::Vector3& lp)
             :target_link_(l),
              local_pos_(lp){}
+     ContactInfo(){}
         hrp::Link* target_link_;
         hrp::Vector3 local_pos_;
         hrp::Vector3 world_pos_;
@@ -2807,51 +2808,117 @@ void Stabilizer::calcTorque ()
     calcRootLinkWrenchFromInverseDynamics(m_robot, idsb, f_base_wld, t_base_wld);
 
     static std::vector<ContactInfo> civ;
-    if(civ.size() == 0){
-        std::vector<std::vector<Eigen::Vector2d> > fv;
-        szd->get_vertices(fv);
-        if(fv.size()>=2 && fv[0].size()>=4){
-            for(int rl = 0; rl < RL; rl++){
-                for(int i=0; i<fv[rl].size(); i++){
-                    civ.push_back(ContactInfo(m_robot->link(stikp[rl].target_name), stikp[rl].localp + (hrp::Vector3()<<fv[rl][i] * 2,0.0).finished() ));//test
-                }
-            }
-            for(int i=0; i<civ.size();i++){
-                civ[i].world_pos_old_ = civ[i].CalcWorldPos();
-                std::cerr<<"Init ContactInfo: "<<civ[i]<<std::endl;
-            }
-        }
+    
+    if(civ.size() != 8){
+        civ.resize(8);
+        civ[0] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.4,  0.2, 0) );
+        civ[1] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.4, -0.2, 0) );
+        civ[2] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.4,  0.2, 0) );
+        civ[3] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.4, -0.2, 0) );
+        civ[4] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.4,  0.2, 0) );
+        civ[5] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.4, -0.2, 0) );
+        civ[6] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.4,  0.2, 0) );
+        civ[7] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.4, -0.2, 0) );
+
+    }
+    // if(civ.size() == 0){
+    //     std::vector<std::vector<Eigen::Vector2d> > fv;
+    //     szd->get_vertices(fv);
+    //     if(fv.size()>=2 && fv[0].size()>=4){
+    //         for(int rl = 0; rl < RL; rl++){
+    //             for(int i=0; i<fv[rl].size(); i++){
+    //                 civ.push_back(ContactInfo(m_robot->link(stikp[rl].target_name), stikp[rl].localp + (hrp::Vector3()<<fv[rl][i] * 10, 0.0).finished() ));//test
+    //             }
+    //         }
+    //         for(int i=0; i<civ.size();i++){
+    //             civ[i].world_pos_old_ = civ[i].CalcWorldPos();
+    //             std::cerr<<"Init ContactInfo: "<<civ[i]<<std::endl;
+    //         }
+    //     }
+    // }
+
+    // szd->get_vertices()はSetParam()されてない時点では不定だから更新し続けないと・・・
+    //std::vector<ContactInfo> civ;
+    // std::vector<std::vector<Eigen::Vector2d> > fv;
+    // szd->get_vertices(fv);
+    // for(int rl = 0; rl < RL; rl++){
+    //     for(int i=0; i<fv[rl].size(); i++){
+    //         civ[4*rl + i] = (ContactInfo(m_robot->link(stikp[rl].target_name), stikp[rl].localp + (hrp::Vector3()<<fv[rl][i] * 10, 0.0).finished() ));//test
+    //     }
+    // }
+
+    if(loop%100==0){
+    dbg(civ[0].local_pos_.transpose());
+    dbg(civ[1].local_pos_.transpose());
+    dbg(civ[2].local_pos_.transpose());
+    dbg(civ[3].local_pos_.transpose());
+    dbg(civ[4].local_pos_.transpose());
+    dbg(civ[5].local_pos_.transpose());
+    dbg(civ[6].local_pos_.transpose());
+    dbg(civ[7].local_pos_.transpose());
+
+    dbg(civ[0].world_pos_.transpose());
+    dbg(civ[1].world_pos_.transpose());
+    dbg(civ[2].world_pos_.transpose());
+    dbg(civ[3].world_pos_.transpose());
+    dbg(civ[4].world_pos_.transpose());
+    dbg(civ[5].world_pos_.transpose());
+    dbg(civ[6].world_pos_.transpose());
+    dbg(civ[7].world_pos_.transpose());
+
+    
+    dbg(civ[0].world_f_.transpose());
+    dbg(civ[1].world_f_.transpose());
+    dbg(civ[2].world_f_.transpose());
+    dbg(civ[3].world_f_.transpose());
+    dbg(civ[4].world_f_.transpose());
+    dbg(civ[5].world_f_.transpose());
+    dbg(civ[6].world_f_.transpose());
+    dbg(civ[7].world_f_.transpose());
+    }
+                
+    // dbg(stikp[1].localp.transpose());
+    // dbg(fv[1][0].transpose());
+    // dbg(fv[1][1].transpose());
+    // dbg(fv[1][2].transpose());
+    // dbg(fv[1][3].transpose());
+
+
+
+    const double vfloor_h = -1.2;
+
+    //    // calc virtual floor reaction force
+    for (int i=0; i<civ.size(); i++){
+       civ[i].CalcWorldPos();
+       if(civ[i].world_pos_(2) < vfloor_h){
+           const double pos_err = vfloor_h - civ[i].world_pos_(2);
+           const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
+           civ[i].world_f_ << 0, 0, 400 * pos_err + 40 * vel_err;
+           if(civ[i].world_f_.norm() > 400){
+               civ[i].world_f_ = civ[i].world_f_.normalized() * 400;
+           }
+           const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
+           hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
+           hrp::dmatrix J_contact;
+           jp.calcJacobian(J_contact, civ[i].local_pos_);
+           hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
+           for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
+       }
+       civ[i].UpdateState();
     }
 
 
-    const double vfloor_h = 0.0;
-
-    //    // calc virtual floor reaction force
-//    for (int i=0; i<civ.size(); i++){
-//        civ[i].CalcWorldPos();
-//        if(civ[i].world_pos_(2) < vfloor_h){
-//            const double pos_err = vfloor_h - civ[i].world_pos_(2);
-//            const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
-//            civ[i].world_f_ << 0, 0, 10000 * pos_err + 1000 * vel_err;
-//            const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
-//            hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
-//            hrp::dmatrix J_contact;
-//            jp.calcJacobian(J_contact, civ[i].local_pos_);
-//            hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
-//            for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
-//        }
-//        civ[i].UpdateState();
-//    }
-
     // joint limit
     for(int i=0;i<m_robot->numJoints();i++){
-        const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(5);
-        const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(5);
+        const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(15);
+        const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(15);
         if(m_qCurrent.data[i] > soft_ulimit){
-            m_robot->joint(i)->u -= fabs(m_qCurrent.data[i] - soft_ulimit) * 10;
+            m_robot->joint(i)->u -= fabs(m_qCurrent.data[i] - soft_ulimit) * 100;
+            //dbg(fabs(m_qCurrent.data[i] - soft_ulimit) * 100);
         }
         if(m_qCurrent.data[i] < soft_llimit){
-            m_robot->joint(i)->u += fabs(soft_llimit - m_qCurrent.data[i]) * 10;
+            m_robot->joint(i)->u += fabs(soft_llimit - m_qCurrent.data[i]) * 100;
+            //dbg(fabs(soft_llimit - m_qCurrent.data[i]) * 100);
         }
     }
 
