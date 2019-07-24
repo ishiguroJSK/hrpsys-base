@@ -209,6 +209,9 @@ class Stabilizer
   std::vector<RTC::InPort<RTC::TimedDoubleSeq> *> m_wrenchesIn;
   std::vector<RTC::TimedDoubleSeq> m_ref_wrenches;
   std::vector<RTC::InPort<RTC::TimedDoubleSeq> *> m_ref_wrenchesIn;
+  std::vector<RTC::TimedDoubleSeq> m_feedbackWrenches;
+  typedef boost::shared_ptr<RTC::InPort<RTC::TimedDoubleSeq> > ITDS_Ptr;
+  std::vector<ITDS_Ptr> m_feedbackWrenchesIn;
   
   // </rtc-template>
 

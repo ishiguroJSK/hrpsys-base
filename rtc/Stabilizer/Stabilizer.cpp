@@ -221,6 +221,8 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
   m_ref_wrenchesIn.resize(nforce);
   m_limbCOPOffset.resize(nforce);
   m_limbCOPOffsetIn.resize(nforce);
+  m_feedbackWrenches.resize(npforce);
+  m_feedbackWrenchesIn.resize(npforce);
   std::cerr << "[" << m_profile.instance_name << "] force sensor ports (" << npforce << ")" << std::endl;
   for (unsigned int i=0; i<nforce; ++i) {
       std::string force_sensor_name = force_sensor_names[i];
@@ -240,6 +242,15 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
       std::string nm("limbCOPOffset_"+force_sensor_name);
       m_limbCOPOffsetIn[i] = new RTC::InPort<RTC::TimedPoint3D>(nm.c_str(), m_limbCOPOffset[i]);
       registerInPort(nm.c_str(), *m_limbCOPOffsetIn[i]);
+      std::cerr << "[" << m_profile.instance_name << "]   name = " << nm << std::endl;
+  }
+  std::cerr << "[" << m_profile.instance_name << "] feedbackWrench ports (" << npforce << ")" << std::endl;
+  for (unsigned int i=0; i<npforce; ++i) {
+      std::string force_sensor_name = force_sensor_names[i];
+      std::string nm("feedback_"+force_sensor_name);
+      m_feedbackWrenches[i].data.length(6);
+      m_feedbackWrenchesIn[i] = ITDS_Ptr(new RTC::InPort<RTC::TimedDoubleSeq>(nm.c_str(), m_feedbackWrenches[i]));
+      registerInPort(nm.c_str(), *m_feedbackWrenchesIn[i]);
       std::cerr << "[" << m_profile.instance_name << "]   name = " << nm << std::endl;
   }
 
@@ -616,6 +627,11 @@ RTC::ReturnCode_t Stabilizer::onExecute(RTC::UniqueId ec_id)
     sbp_cog_offset(0) = m_sbpCogOffset.data.x;
     sbp_cog_offset(1) = m_sbpCogOffset.data.y;
     sbp_cog_offset(2) = m_sbpCogOffset.data.z;
+  }
+  for (int i=0; i<m_feedbackWrenchesIn.size(); i++) {
+    if ( m_feedbackWrenchesIn[i]->isNew() ) {
+        m_feedbackWrenchesIn[i]->read();
+    }
   }
 
   if (is_legged_robot) {
@@ -2926,9 +2942,35 @@ void Stabilizer::calcTorque ()
     // if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
 
+    m_robot->link("RARM_JOINT1")->ulimit = deg2rad(-30);
+    m_robot->link("LARM_JOINT1")->llimit = deg2rad(30);
+
+    std::map<std::string, std::string> fbwport2link;
+    fbwport2link["feedback_lfsensor"] = "LLEG_JOINT5";
+    fbwport2link["feedback_rfsensor"] = "RLEG_JOINT5";
+    fbwport2link["feedback_lhsensor"] = "LARM_JOINT6";
+    fbwport2link["feedback_rhsensor"] = "RARM_JOINT6";
+
+
+    // calc real robot feedback force
+    static std::vector<hrp::dvector6> wrench_ee_wld(m_feedbackWrenches.size());
+    for (int i=0; i<m_feedbackWrenches.size(); i++){
+        wrench_ee_wld[i] = 0.99*wrench_ee_wld[i] + 0.01 * hrp::to_dvector(m_feedbackWrenches[i].data);//filter
+        if(wrench_ee_wld[i].norm()>30)wrench_ee_wld[i] = wrench_ee_wld[i].normalized() * 30;
+        hrp::JointPath jp(m_robot->rootLink(), m_robot->link(fbwport2link[m_feedbackWrenchesIn[i]->name()]));
+        hrp::dmatrix J_base_to_ee;
+        hrp::Vector3 ee_offset = hrp::Vector3(0,0,0);
+        jp.calcJacobian(J_base_to_ee, ee_offset);
+        hrp::dvector tq_from_feedbackWrench = J_base_to_ee.transpose() * wrench_ee_wld[i];
+        for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_from_feedbackWrench(j);
+        if(loop%500==0)dbgv(wrench_ee_wld[i]);
+    }
+    if(loop%500==0)dbgv(hrp::getUAll(m_robot));
+
+
     static hrp::dvector q_old(hrp::to_dvector(m_qCurrent.data));
 
-    hrp::dvector q_vel = (hrp::to_dvector(m_qCurrent.data) - q_old)/0.002;
+    hrp::dvector q_vel = (hrp::to_dvector(m_qCurrent.data) - q_old) / dt;
     // joint limit
     for(int i=0;i<m_robot->numJoints();i++){
         const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(15);
@@ -2936,10 +2978,10 @@ void Stabilizer::calcTorque ()
         double soft_jlimit_tq = 0;
 
         if(m_qCurrent.data[i] > soft_ulimit){
-            soft_jlimit_tq = 50 * (soft_ulimit - m_qCurrent.data[i]) ;//+ 10 * (0 - q_vel(i));
+            soft_jlimit_tq = 50 * (soft_ulimit - m_qCurrent.data[i]) + 1 * (0 - q_vel(i));
         }
         if(m_qCurrent.data[i] < soft_llimit){
-            soft_jlimit_tq = 50 * (soft_llimit - m_qCurrent.data[i]) ;;// 10 * (0 - q_vel(i));
+            soft_jlimit_tq = 50 * (soft_llimit - m_qCurrent.data[i]) + 1 * (0 - q_vel(i));
         }
 
         LIMIT_MINMAX(soft_jlimit_tq, -30,30);
