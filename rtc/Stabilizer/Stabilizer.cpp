@@ -2858,7 +2858,7 @@ void Stabilizer::calcTorque ()
     for(int i=0;i<m_robot->numJoints();i++)idsb.q(i) = m_robot->joint(i)->q;
     idsb.dq.fill(0);
     idsb.ddq.fill(0);
-    const hrp::Vector3 g(0, 0, 9.80665 * 0.8);
+    const hrp::Vector3 g(0, 0, 9.80665 * 0.9);
     idsb.base_p = m_robot->rootLink()->p;
     idsb.base_v.fill(0);
     idsb.base_dv = g;
@@ -2898,32 +2898,32 @@ void Stabilizer::calcTorque ()
     }
 
 
-    //    // calc virtual floor reaction force
-    for (int i=0; i<civ.size(); i++){
-       civ[i].CalcWorldPos();
-       double vfloor_h;
-       if(civ[i].target_link_->name.find("LEG") != std::string::npos){
-           vfloor_h = m_robot->rootLink()->p(Z) - 1.0;
-       }else{
-           vfloor_h = m_robot->rootLink()->p(Z) + 0.0;
-       }
-       if(civ[i].world_pos_(2) < vfloor_h){
-           const double pos_err = vfloor_h - civ[i].world_pos_(2);
-           const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
-           civ[i].world_f_ << 0, 0, 400 * pos_err + 40 * vel_err;
-           if(civ[i].world_f_.norm() > 400){
-               civ[i].world_f_ = civ[i].world_f_.normalized() * 400;
-           }
-           const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
-           hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
-           hrp::dmatrix J_contact;
-           jp.calcJacobian(J_contact, civ[i].local_pos_);
-           hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
-           for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
-       }
-       civ[i].UpdateState();
-    }
-    if(loop%500==0)dbgv(hrp::getUAll(m_robot));
+       // calc virtual floor reaction force
+    // for (int i=0; i<civ.size(); i++){
+    //    civ[i].CalcWorldPos();
+    //    double vfloor_h;
+    //    if(civ[i].target_link_->name.find("LEG") != std::string::npos){
+    //        vfloor_h = m_robot->rootLink()->p(Z) - 1.0;
+    //    }else{
+    //        vfloor_h = m_robot->rootLink()->p(Z) - 0.1;
+    //    }
+    //    if(civ[i].world_pos_(2) < vfloor_h){
+    //        const double pos_err = vfloor_h - civ[i].world_pos_(2);
+    //        const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
+    //        civ[i].world_f_ << 0, 0, 500 * pos_err + 5 * vel_err;// P,D = ?,10 OUT
+    //        if(civ[i].world_f_.norm() > 400){
+    //            civ[i].world_f_ = civ[i].world_f_.normalized() * 400;
+    //        }
+    //        const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
+    //        hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
+    //        hrp::dmatrix J_contact;
+    //        jp.calcJacobian(J_contact, civ[i].local_pos_);
+    //        hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
+    //        for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
+    //    }
+    //    civ[i].UpdateState();
+    // }
+    // if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
 
     static hrp::dvector q_old(hrp::to_dvector(m_qCurrent.data));
@@ -2936,10 +2936,10 @@ void Stabilizer::calcTorque ()
         double soft_jlimit_tq = 0;
 
         if(m_qCurrent.data[i] > soft_ulimit){
-            soft_jlimit_tq = 100 * (soft_ulimit - m_qCurrent.data[i]) + 10 * (0 - q_vel(i));
+            soft_jlimit_tq = 50 * (soft_ulimit - m_qCurrent.data[i]) ;//+ 10 * (0 - q_vel(i));
         }
         if(m_qCurrent.data[i] < soft_llimit){
-            soft_jlimit_tq = 100 * (soft_llimit - m_qCurrent.data[i]) + 10 * (0 - q_vel(i));
+            soft_jlimit_tq = 50 * (soft_llimit - m_qCurrent.data[i]) ;;// 10 * (0 - q_vel(i));
         }
 
         LIMIT_MINMAX(soft_jlimit_tq, -30,30);
@@ -2948,6 +2948,15 @@ void Stabilizer::calcTorque ()
     q_old = hrp::to_dvector(m_qCurrent.data);
     if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
+
+
+    //debug
+    // for(int i=0;i<m_robot->numJoints();i++){
+    //     m_robot->joint(i)->u = 0;
+    // }
+    //    m_robot->joint(0)->u = -3;
+    
+    
 
 //    if(loop%200==0){
 //        dbg(m_robot->rootLink()->p(Z));
