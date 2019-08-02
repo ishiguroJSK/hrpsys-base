@@ -2959,7 +2959,7 @@ void Stabilizer::calcTorque ()
             rats::difference_rotation(diff_rot, m_robot->link(targets[i])->R, hrp::Matrix33::Identity());
             hrp::Vector3 diff_rot_d = (diff_rot - diff_rots_old[i])/dt;
             hrp::dvector6 wrench;
-            wrench << 0,0,0,diff_rot * 100 + diff_rot_d * 1;
+            wrench << 0,0,0,diff_rot * 1000 + diff_rot_d * 10;
             hrp::JointPath jp(m_robot->rootLink(), m_robot->link(targets[i]));
             hrp::dmatrix J_ee;
             jp.calcJacobian(J_ee);
@@ -2975,8 +2975,8 @@ void Stabilizer::calcTorque ()
         targets.push_back("LLEG_JOINT5");
         targets.push_back("RLEG_JOINT5");
         double dist = m_robot->link("LLEG_JOINT5")->p(Y) - m_robot->link("RLEG_JOINT5")->p(Y);
-        if(dist < 0.2){
-            double err = dist - 0.2;
+        if(dist < 0.3){
+            double err = dist - 0.3;
             for (int i=0; i<targets.size();i++){
                 hrp::dvector6 wrench;
                 wrench << 0, (i==0 ? -1 : 1) * err*1000,0,0,0,0;
@@ -3028,10 +3028,10 @@ void Stabilizer::calcTorque ()
             const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(15);
             double soft_jlimit_tq = 0;
             if(m_qCurrent.data[i] > soft_ulimit){
-                soft_jlimit_tq = 100 * (soft_ulimit - m_qCurrent.data[i]);// + 10 * (0 - q_vel(i));
+                soft_jlimit_tq = 100 * (soft_ulimit - m_qCurrent.data[i]) + 1 * (0 - q_vel(i));
             }
             if(m_qCurrent.data[i] < soft_llimit){
-                soft_jlimit_tq = 100 * (soft_llimit - m_qCurrent.data[i]);// + 10 * (0 - q_vel(i));
+                soft_jlimit_tq = 100 * (soft_llimit - m_qCurrent.data[i]) + 1 * (0 - q_vel(i));
             }
             m_robot->joint(i)->u += soft_jlimit_tq;
         }
@@ -3040,18 +3040,18 @@ void Stabilizer::calcTorque ()
     }
 
 
-    {
-        //simulation joint friction damper
-        const hrp::dvector q = hrp::to_dvector(m_qCurrent.data);
-        static hrp::dvector q_old(q);
-        hrp::dvector q_vel = (q - q_old) / dt;
-        hrp::dvector friction_tq = -10 * q_vel;
-        for (int i=0; i<m_robot->numJoints(); i++){
-            LIMIT_MINMAX(friction_tq(i), -2, 2);
-            m_robot->joint(i)->u += friction_tq(i);
-        }
-        q_old = q;
-    }
+    // {
+    //     //simulation joint friction damper
+    //     const hrp::dvector q = hrp::to_dvector(m_qCurrent.data);
+    //     static hrp::dvector q_old(q);
+    //     hrp::dvector q_vel = (q - q_old) / dt;
+    //     hrp::dvector friction_tq = -10 * q_vel;
+    //     for (int i=0; i<m_robot->numJoints(); i++){
+    //         LIMIT_MINMAX(friction_tq(i), -2, 2);
+    //         m_robot->joint(i)->u += friction_tq(i);
+    //     }
+    //     q_old = q;
+    // }
 
 
 
@@ -3061,6 +3061,9 @@ void Stabilizer::calcTorque ()
     //     m_robot->joint(i)->u = 0;
     // }
     //    m_robot->joint(0)->u = -3;
+    for(int i=0;i<m_robot->numJoints();i++){
+        LIMIT_MINMAX(m_robot->joint(i)->u, -20,20);
+    }
 
 
     updateInvDynStateBuffer(idsb);
