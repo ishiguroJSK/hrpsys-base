@@ -84,6 +84,7 @@ Stabilizer::Stabilizer(RTC::Manager* manager)
     m_actContactStatesOut("actContactStates", m_actContactStates),
     m_COPInfoOut("COPInfo", m_COPInfo),
     m_emergencySignalOut("emergencySignal", m_emergencySignal),
+    m_teleopOdomOut("teleopOdom", m_teleopOdom),
     // for debug output
     m_originRefZmpOut("originRefZmp", m_originRefZmp),
     m_originRefCogOut("originRefCog", m_originRefCog),
@@ -148,6 +149,7 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
   addOutPort("actContactStates", m_actContactStatesOut);
   addOutPort("COPInfo", m_COPInfoOut);
   addOutPort("emergencySignal", m_emergencySignalOut);
+  addOutPort("teleopOdom", m_teleopOdomOut);
   // for debug output
   addOutPort("originRefZmp", m_originRefZmpOut);
   addOutPort("originRefCog", m_originRefCogOut);
@@ -408,7 +410,7 @@ RTC::ReturnCode_t Stabilizer::onInitialize()
   cop_check_margin = 20.0*1e-3; // [m]
   cp_check_margin.resize(4, 30*1e-3); // [m]
   cp_offset = hrp::Vector3(0.0, 0.0, 0.0); // [m]
-  tilt_margin.resize(2, 30 * M_PI / 180); // [rad]
+  tilt_margin.resize(2, 30 * M_PI / 180); // [rad]m_currentBasePosOut
   contact_decision_threshold = 50; // [N]
   eefm_use_force_difference_control = true;
   eefm_use_swing_damping = false;
@@ -2788,6 +2790,7 @@ class ContactInfo{
     public:
     ContactInfo(hrp::Link* l, const hrp::Vector3& lp)
             :target_link_(l),
+             is_contact(false),
              local_pos_(lp){}
      ContactInfo(){}
         hrp::Link* target_link_;
@@ -2795,6 +2798,7 @@ class ContactInfo{
         hrp::Vector3 world_pos_;
         hrp::Vector3 world_pos_old_;
         hrp::Vector3 world_f_;
+        bool is_contact;
         hrp::Vector3 CalcWorldPos(){ world_pos_ = target_link_->p + target_link_->R * local_pos_; return world_pos_;}
         void UpdateState(){world_pos_old_ = world_pos_;}
         friend std::ostream& operator<<(std::ostream& os, const ContactInfo& ci){
@@ -2863,8 +2867,6 @@ namespace hrp{
 
 void Stabilizer::calcTorque ()
 {
-    enum RL_ENUM{R = 0,L,RL};
-    enum XYZ_ENUM{X = 0,Y,Z,XYZ};
     for(int i=0;i<m_robot->numJoints();i++)m_robot->joint(i)->q = m_qCurrent.data[i];
 
     if(!idsb.is_initialized){
@@ -2891,59 +2893,105 @@ void Stabilizer::calcTorque ()
     if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
     static std::vector<ContactInfo> civ;
-    if(civ.size() != 4*4){
-        civ.resize(4*4);
-        const double a = 2;
-        civ[0] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
-        civ[1] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
-        civ[2] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
-        civ[3] = ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
-        civ[4] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
-        civ[5] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
-        civ[6] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
-        civ[7] = ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
+    if(civ.size() == 0){
+        const double a = 4;
+        civ.push_back(ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.1,  0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3( 0.1, -0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.1,  0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("RLEG_JOINT5"), stikp[0].localp + hrp::Vector3(-0.1, -0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.1,  0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3( 0.1, -0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.1,  0.05, 0)*a ));
+        civ.push_back(ContactInfo(m_robot->link("LLEG_JOINT5"), stikp[1].localp + hrp::Vector3(-0.1, -0.05, 0)*a ));
 
-        civ[8] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
-        civ[9] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
-        civ[10] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
-        civ[11] = ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
-        civ[12] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3( 0.1,  0.05, 0)*a );
-        civ[13] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3( 0.1, -0.05, 0)*a );
-        civ[14] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3(-0.1,  0.05, 0)*a );
-        civ[15] = ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3(-0.1, -0.05, 0)*a );
+//        civ.push_back(ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3( 0.1,  0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3( 0.1, -0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3(-0.1,  0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("RARM_JOINT6"), stikp[2].localp + hrp::Vector3(-0.1, -0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3( 0.1,  0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3( 0.1, -0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3(-0.1,  0.05, 0)*a ));
+//        civ.push_back(ContactInfo(m_robot->link("LARM_JOINT6"), stikp[3].localp + hrp::Vector3(-0.1, -0.05, 0)*a ));
     }
 
 
        // calc virtual floor reaction force
-    // for (int i=0; i<civ.size(); i++){
-    //    civ[i].CalcWorldPos();
-    //    double vfloor_h;
-    //    if(civ[i].target_link_->name.find("LEG") != std::string::npos){
-    //        vfloor_h = m_robot->rootLink()->p(Z) - 1.0;
-    //    }else{
-    //        vfloor_h = m_robot->rootLink()->p(Z) - 0.1;
-    //    }
-    //    if(civ[i].world_pos_(2) < vfloor_h){
-    //        const double pos_err = vfloor_h - civ[i].world_pos_(2);
-    //        const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
-    //        civ[i].world_f_ << 0, 0, 500 * pos_err + 5 * vel_err;// P,D = ?,10 OUT
-    //        if(civ[i].world_f_.norm() > 400){
-    //            civ[i].world_f_ = civ[i].world_f_.normalized() * 400;
-    //        }
-    //        const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
-    //        hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
-    //        hrp::dmatrix J_contact;
-    //        jp.calcJacobian(J_contact, civ[i].local_pos_);
-    //        hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
-    //        for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
-    //    }
-    //    civ[i].UpdateState();
-    // }
-    // if(loop%500==0)dbgv(hrp::getUAll(m_robot));
+//    {
+//        for (int i=0; i<civ.size(); i++){
+//            civ[i].CalcWorldPos();
+//            double vfloor_h;
+//            if(civ[i].target_link_->name.find("LEG") != std::string::npos){
+//                vfloor_h = m_robot->rootLink()->p(Z) - 1.2;
+//            }else{
+//                vfloor_h = m_robot->rootLink()->p(Z) - 0.1;
+//            }
+//            if(civ[i].world_pos_(2) < vfloor_h){
+//                civ[i].is_contact = true;
+//                const double pos_err = vfloor_h - civ[i].world_pos_(2);
+//                const double vel_err = 0 - (civ[i].world_pos_(2) - civ[i].world_pos_old_(2)) / dt;
+//                civ[i].world_f_ << 0, 0, 5000 * pos_err + 50 * vel_err;// P,D = ?,10 OUT
+//                if(civ[i].world_f_.norm() > 500){
+//                    civ[i].world_f_ = civ[i].world_f_.normalized() * 500;
+//                }
+//                const hrp::Vector3 world_f_rel_base = m_robot->rootLink()->R.transpose() * civ[i].world_f_;
+//                hrp::JointPath jp(m_robot->rootLink(), civ[i].target_link_);
+//                hrp::dmatrix J_contact;
+//                jp.calcJacobian(J_contact, civ[i].local_pos_);
+//                hrp::dvector tq_for_virtual_reaction_force = (J_contact.topRows(3)).transpose() * world_f_rel_base;
+//                for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_virtual_reaction_force(j);
+//            }else{
+//                civ[i].is_contact = false;
+//            }
+//            civ[i].UpdateState();
+//            }
+//        if(loop%500==0)dbgv(hrp::getUAll(m_robot));
+//    }
 
 
-    m_robot->link("RARM_JOINT1")->ulimit = deg2rad(-30);
-    m_robot->link("LARM_JOINT1")->llimit = deg2rad(30);
+    {
+        //fix ee rot horizontal
+        std::vector<std::string> targets;
+        targets.push_back("LLEG_JOINT5");
+        targets.push_back("RLEG_JOINT5");
+        static std::vector<hrp::Vector3> diff_rots_old(targets.size());
+        for (int i=0; i<targets.size();i++){
+            hrp::Vector3 diff_rot;
+            rats::difference_rotation(diff_rot, m_robot->link(targets[i])->R, hrp::Matrix33::Identity());
+            hrp::Vector3 diff_rot_d = (diff_rot - diff_rots_old[i])/dt;
+            hrp::dvector6 wrench;
+            wrench << 0,0,0,diff_rot * 100 + diff_rot_d * 1;
+            hrp::JointPath jp(m_robot->rootLink(), m_robot->link(targets[i]));
+            hrp::dmatrix J_ee;
+            jp.calcJacobian(J_ee);
+            hrp::dvector tq_for_fix = J_ee.transpose() * wrench;
+            for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_fix(j);
+            diff_rots_old[i] = diff_rot;
+        }
+    }
+
+    {
+        //keep ee apart each other
+        std::vector<std::string> targets;
+        targets.push_back("LLEG_JOINT5");
+        targets.push_back("RLEG_JOINT5");
+        double dist = m_robot->link("LLEG_JOINT5")->p(Y) - m_robot->link("RLEG_JOINT5")->p(Y);
+        if(dist < 0.2){
+            double err = dist - 0.2;
+            for (int i=0; i<targets.size();i++){
+                hrp::dvector6 wrench;
+                wrench << 0, (i==0 ? -1 : 1) * err*1000,0,0,0,0;
+                hrp::JointPath jp(m_robot->rootLink(), m_robot->link(targets[i]));
+                hrp::dmatrix J_ee;
+                jp.calcJacobian(J_ee);
+                hrp::dvector tq_for_apart = J_ee.transpose() * wrench;
+                for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_apart(j);
+            }
+        }
+    }
+
+
+
+
 
     std::map<std::string, std::string> fbwport2link;
     fbwport2link["feedback_lfsensor"] = "LLEG_JOINT5";
@@ -2968,27 +3016,43 @@ void Stabilizer::calcTorque ()
     if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
 
-    static hrp::dvector q_old(hrp::to_dvector(m_qCurrent.data));
-
-    hrp::dvector q_vel = (hrp::to_dvector(m_qCurrent.data) - q_old) / dt;
-    // joint limit
-    for(int i=0;i<m_robot->numJoints();i++){
-        const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(15);
-        const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(15);
-        double soft_jlimit_tq = 0;
-
-        if(m_qCurrent.data[i] > soft_ulimit){
-            soft_jlimit_tq = 50 * (soft_ulimit - m_qCurrent.data[i]) + 1 * (0 - q_vel(i));
+    {
+        // soft joint limit
+        static hrp::dvector q_old(hrp::to_dvector(m_qCurrent.data));
+        hrp::dvector q_vel = (hrp::to_dvector(m_qCurrent.data) - q_old) / dt;
+        // joint limit
+        m_robot->link("RARM_JOINT1")->ulimit = deg2rad(-30);
+        m_robot->link("LARM_JOINT1")->llimit = deg2rad(30);
+        for(int i=0;i<m_robot->numJoints();i++){
+            const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(15);
+            const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(15);
+            double soft_jlimit_tq = 0;
+            if(m_qCurrent.data[i] > soft_ulimit){
+                soft_jlimit_tq = 100 * (soft_ulimit - m_qCurrent.data[i]);// + 10 * (0 - q_vel(i));
+            }
+            if(m_qCurrent.data[i] < soft_llimit){
+                soft_jlimit_tq = 100 * (soft_llimit - m_qCurrent.data[i]);// + 10 * (0 - q_vel(i));
+            }
+            m_robot->joint(i)->u += soft_jlimit_tq;
         }
-        if(m_qCurrent.data[i] < soft_llimit){
-            soft_jlimit_tq = 50 * (soft_llimit - m_qCurrent.data[i]) + 1 * (0 - q_vel(i));
-        }
-
-        LIMIT_MINMAX(soft_jlimit_tq, -30,30);
-        m_robot->joint(i)->u += soft_jlimit_tq;
+        q_old = hrp::to_dvector(m_qCurrent.data);
+        if(loop%500==0)dbgv(hrp::getUAll(m_robot));
     }
-    q_old = hrp::to_dvector(m_qCurrent.data);
-    if(loop%500==0)dbgv(hrp::getUAll(m_robot));
+
+
+    {
+        //simulation joint friction damper
+        const hrp::dvector q = hrp::to_dvector(m_qCurrent.data);
+        static hrp::dvector q_old(q);
+        hrp::dvector q_vel = (q - q_old) / dt;
+        hrp::dvector friction_tq = -10 * q_vel;
+        for (int i=0; i<m_robot->numJoints(); i++){
+            LIMIT_MINMAX(friction_tq(i), -2, 2);
+            m_robot->joint(i)->u += friction_tq(i);
+        }
+        q_old = q;
+    }
+
 
 
 
@@ -2997,16 +3061,14 @@ void Stabilizer::calcTorque ()
     //     m_robot->joint(i)->u = 0;
     // }
     //    m_robot->joint(0)->u = -3;
-    
-    
 
-//    if(loop%200==0){
-//        dbg(m_robot->rootLink()->p(Z));
-//        dbg(m_robot->link("RLEG_JOINT5")->p.transpose());
-//        dbg(m_robot->link("LLEG_JOINT5")->p.transpose());
-//    }
 
     updateInvDynStateBuffer(idsb);
+
+    m_teleopOdom.data = (RTC::Pose3D){1.0,2.0,3.0,0.0,0.0,1.57* loop * 0.001};
+    m_teleopOdom.tm = m_qRef.tm;
+    m_teleopOdomOut.write();
+
 }
 //void Stabilizer::calcTorque ()
 //{
