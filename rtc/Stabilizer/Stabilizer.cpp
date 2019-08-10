@@ -2989,6 +2989,28 @@ void Stabilizer::calcTorque ()
         }
     }
 
+    {
+        // floor
+        std::vector<std::string> targets;
+        targets.push_back("LLEG_JOINT5");
+        targets.push_back("RLEG_JOINT5");
+        for (int i=0; i<targets.size();i++){
+            double height = m_robot->link(targets[i])->p(Z) - m_robot->rootLink()->p(Z);
+            if(height < -1.0){
+                hrp::dvector6 wrench;
+                wrench << 0,0, -(height-(-1.0))*10000,0,0,0;
+
+                if(m_robot->link(targets[i])->p(X)<0) wrench(X) += - m_robot->link(targets[i])->p(X) * 1000;
+                
+                hrp::JointPath jp(m_robot->rootLink(), m_robot->link(targets[i]));
+                hrp::dmatrix J_ee;
+                jp.calcJacobian(J_ee);
+                hrp::dvector tq_for_apart = J_ee.transpose() * wrench;
+                for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_for_apart(j);
+            }
+        }
+    }
+
 
 
 
@@ -3003,7 +3025,7 @@ void Stabilizer::calcTorque ()
     // calc real robot feedback force
     static std::vector<hrp::dvector6> wrench_ee_wld(m_feedbackWrenches.size());
     for (int i=0; i<m_feedbackWrenches.size(); i++){
-        wrench_ee_wld[i] = 0.99*wrench_ee_wld[i] + 0.01 * hrp::to_dvector(m_feedbackWrenches[i].data);//filter
+        wrench_ee_wld[i] = 0.0 * wrench_ee_wld[i] + 1.0 * hrp::to_dvector(m_feedbackWrenches[i].data) * 0.25;//filter
         if(wrench_ee_wld[i].norm()>30)wrench_ee_wld[i] = wrench_ee_wld[i].normalized() * 30;
         hrp::JointPath jp(m_robot->rootLink(), m_robot->link(fbwport2link[m_feedbackWrenchesIn[i]->name()]));
         hrp::dmatrix J_base_to_ee;
@@ -3021,8 +3043,8 @@ void Stabilizer::calcTorque ()
         static hrp::dvector q_old(hrp::to_dvector(m_qCurrent.data));
         hrp::dvector q_vel = (hrp::to_dvector(m_qCurrent.data) - q_old) / dt;
         // joint limit
-        m_robot->link("RARM_JOINT1")->ulimit = deg2rad(-30);
-        m_robot->link("LARM_JOINT1")->llimit = deg2rad(30);
+        m_robot->link("RARM_JOINT1")->ulimit = deg2rad(-10);
+        m_robot->link("LARM_JOINT1")->llimit = deg2rad(10);
         for(int i=0;i<m_robot->numJoints();i++){
             const double soft_ulimit = m_robot->joint(i)->ulimit - deg2rad(15);
             const double soft_llimit = m_robot->joint(i)->llimit + deg2rad(15);
@@ -3062,9 +3084,16 @@ void Stabilizer::calcTorque ()
     // }
     //    m_robot->joint(0)->u = -3;
     for(int i=0;i<m_robot->numJoints();i++){
-        LIMIT_MINMAX(m_robot->joint(i)->u, -20,20);
+        LIMIT_MINMAX(m_robot->joint(i)->u, -80,80);
     }
 
+
+    static double alpha = 0;
+    if(control_mode != MODE_IDLE)alpha += dt / 20;
+    LIMIT_MINMAX(alpha, 0,1);
+    for (int i=0; i<m_robot->numJoints(); i++){
+        m_robot->joint(i)->u *= alpha;
+    }
 
     updateInvDynStateBuffer(idsb);
 
