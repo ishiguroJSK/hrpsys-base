@@ -3023,13 +3023,35 @@ void Stabilizer::calcTorque ()
 
 
     // calc real robot feedback force
-    static std::vector<hrp::dvector6> wrench_ee_wld(m_feedbackWrenches.size());
-    static std::vector<hrp::Vector3> ee_pos(m_feedbackWrenches.size()), ee_rot(m_feedbackWrenches.size());
+    std::vector<hrp::Vector3> ee_pos(m_feedbackWrenches.size());
+    std::vector<hrp::Matrix33> ee_rot(m_feedbackWrenches.size());
+    for(int i=0; i<ee_pos.size();i++){ ee_pos[i] = m_robot->link(fbwport2link[m_feedbackWrenchesIn[i]->name()])->p; }
+    for(int i=0; i<ee_pos.size();i++){ ee_rot[i] = m_robot->link(fbwport2link[m_feedbackWrenchesIn[i]->name()])->R; }
+    static std::vector<hrp::dvector6> wrench_ee_wld;
+    static std::vector<hrp::Vector3> ee_pos_old;
+    static std::vector<hrp::Matrix33> ee_rot_old;
+    if(wrench_ee_wld.size() == 0){
+        wrench_ee_wld.resize(m_feedbackWrenches.size());
+        for(int i=0;i<wrench_ee_wld.size();i++){ wrench_ee_wld[i] = hrp::dvector6::Zero(); }
+        ee_pos_old = ee_pos;
+        ee_rot_old = ee_rot;
+    }
     for (int i=0; i<m_feedbackWrenches.size(); i++){
+        hrp::Vector3 ee_pos_vel = (ee_pos[i] - ee_pos_old[i])/dt;
+        hrp::Vector3 ee_rot_vel = ee_rot_old[i] * hrp::omegaFromRot(ee_rot_old[i].transpose() * ee_rot[i]) /dt;
+        hrp::Vector3 f = hrp::to_dvector(m_feedbackWrenches[i].data).head(3) * 0.3;
+        hrp::Vector3 t = hrp::to_dvector(m_feedbackWrenches[i].data).tail(3) * 0.0;
 
-        
-        hrp::dvector6 f = hrp::to_dvector(m_feedbackWrenches[i].data) * 0.3;
-        
+        if(f.norm() > 1e-6){ // avoid zero devide
+            wrench_ee_wld[i].head(3) = f * (1 - (f.dot(ee_pos_vel)) / (f.norm()*f.norm()) );
+        }else{
+            wrench_ee_wld[i].head(3) = f;
+        }
+        if(t.norm() > 1e-6){ // avoid zero devide
+            wrench_ee_wld[i].tail(3) = t * (1 - (t.dot(ee_rot_vel)) / (t.norm()*t.norm()) );
+        }else{
+            wrench_ee_wld[i].tail(3) = t;
+        }
             
         //wrench_ee_wld[i] = 0.0 * wrench_ee_wld[i] + 1.0 * hrp::to_dvector(m_feedbackWrenches[i].data) * 0.3;//filter
         if(wrench_ee_wld[i].norm()>100)wrench_ee_wld[i] = wrench_ee_wld[i].normalized() * 100;
@@ -3041,6 +3063,8 @@ void Stabilizer::calcTorque ()
         for (int j = 0; j < jp.numJoints(); j++) jp.joint(j)->u += tq_from_feedbackWrench(j);
         if(loop%500==0)dbgv(wrench_ee_wld[i]);
     }
+    ee_pos_old = ee_pos;
+    ee_rot_old = ee_rot;
     if(loop%500==0)dbgv(hrp::getUAll(m_robot));
 
 
