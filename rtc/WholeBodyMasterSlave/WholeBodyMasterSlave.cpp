@@ -369,12 +369,18 @@ RTC::ReturnCode_t WholeBodyMasterSlave::onExecute(RTC::UniqueId ec_id){
         if(fik->m_robot->name() == "RHP4B"){
             const double hand_max_vel = M_PI/0.4;//0.4s for 180deg
             {
-                const double trigger_in = MINMAX_LIMITED(m_masterTgtPoses["lhand"].data.position.y, 0, 1);
+                // const double trigger_in = MINMAX_LIMITED(m_masterTgtPoses["lhand"].data.position.y, 0, 1);
+                //task oriented1
+                const double trigger_in = 1;
+
                 double tgt_hand_q = (-29.0 + (124.0-(-29.0))*trigger_in ) /180.0*M_PI;
                 fik->m_robot->link("L_HAND")->q = MINMAX_LIMITED(tgt_hand_q, fik->m_robot->link("L_HAND")->llimit, fik->m_robot->link("L_HAND")->ulimit);
                 avg_q_vel(fik->m_robot->link("L_HAND")->jointId) = hand_max_vel;
             }{
-                const double trigger_in = MINMAX_LIMITED(m_masterTgtPoses["rhand"].data.position.y, 0, 1);
+                // const double trigger_in = MINMAX_LIMITED(m_masterTgtPoses["rhand"].data.position.y, 0, 1);
+                //task oriented1
+                const double trigger_in = 1;
+
                 double tgt_hand_q = (-29.0 + (124.0-(-29.0))*trigger_in ) /180.0*M_PI;
                 fik->m_robot->link("R_HAND")->q = MINMAX_LIMITED(tgt_hand_q, fik->m_robot->link("R_HAND")->llimit, fik->m_robot->link("R_HAND")->ulimit);
                 avg_q_vel(fik->m_robot->link("R_HAND")->jointId) = hand_max_vel;
@@ -529,13 +535,42 @@ void WholeBodyMasterSlave::solveFullbodyIK(const hrp::Pose3& com_ref, const hrp:
         tmp.constraint_weight = wbms->rp_ref_out.tgt[lf].is_contact() ? hrp::dvector6::Constant(3) : hrp::dvector6::Constant(0.1);
         ikc_list.push_back(tmp);
     }
+    // if(has(wbms->wp.use_targets, "rarm")){
+    //     IKConstraint tmp;
+    //     tmp.target_link_name = ee_ikc_map["rarm"].target_link_name;
+    //     tmp.localPos = ee_ikc_map["rarm"].localPos;
+    //     tmp.localR = ee_ikc_map["rarm"].localR;
+    //     tmp.targetPos = rh_ref.p;
+    //     tmp.targetRpy = rh_ref.rpy();
+    //     tmp.constraint_weight = hrp::dvector6::Constant(0.1);
+    //     tmp.pos_precision = 3e-3;
+    //     tmp.rot_precision = deg2rad(3);
+    //     ikc_list.push_back(tmp);
+    // }
+    // if(has(wbms->wp.use_targets, "larm")){
+    //     IKConstraint tmp;
+    //     tmp.target_link_name = ee_ikc_map["larm"].target_link_name;
+    //     tmp.localPos = ee_ikc_map["larm"].localPos;
+    //     tmp.localR = ee_ikc_map["larm"].localR;
+    //     tmp.targetPos = lh_ref.p;
+    //     tmp.targetRpy = lh_ref.rpy();
+    //     tmp.constraint_weight = hrp::dvector6::Constant(0.1);
+    //     tmp.pos_precision = 3e-3;
+    //     tmp.rot_precision = deg2rad(3);
+    //     ikc_list.push_back(tmp);
+    // }
+    ////// RHP4B task oriented1
+    hrp::Vector3 rh_p = rh_ref.p, lh_p = lh_ref.p;
+    rh_p(Z) = lh_p(Z) = (rh_p(Z) + lh_p(Z))/2;
+    rh_p = (rh_p + lh_p)/2 + (rh_p - lh_p).normalized()*0.27;
+    lh_p = (rh_p + lh_p)/2 - (rh_p - lh_p).normalized()*0.27;
     if(has(wbms->wp.use_targets, "rarm")){
         IKConstraint tmp;
         tmp.target_link_name = ee_ikc_map["rarm"].target_link_name;
         tmp.localPos = ee_ikc_map["rarm"].localPos;
         tmp.localR = ee_ikc_map["rarm"].localR;
-        tmp.targetPos = rh_ref.p;
-        tmp.targetRpy = rh_ref.rpy();
+        tmp.targetPos = rh_p;
+        tmp.targetRpy << 0,deg2rad(-45),0;
         tmp.constraint_weight = hrp::dvector6::Constant(0.1);
         tmp.pos_precision = 3e-3;
         tmp.rot_precision = deg2rad(3);
@@ -546,13 +581,42 @@ void WholeBodyMasterSlave::solveFullbodyIK(const hrp::Pose3& com_ref, const hrp:
         tmp.target_link_name = ee_ikc_map["larm"].target_link_name;
         tmp.localPos = ee_ikc_map["larm"].localPos;
         tmp.localR = ee_ikc_map["larm"].localR;
-        tmp.targetPos = lh_ref.p;
-        tmp.targetRpy = lh_ref.rpy();
+        tmp.targetPos = lh_p;
+        tmp.targetRpy << 0,deg2rad(-45),0;
         tmp.constraint_weight = hrp::dvector6::Constant(0.1);
         tmp.pos_precision = 3e-3;
         tmp.rot_precision = deg2rad(3);
         ikc_list.push_back(tmp);
     }
+    ////// RHP4B task oriented2
+    // hrp::Vector3 rh_p = rh_ref.p, lh_p = lh_ref.p;
+    // rh_p(Z) = lh_p(Z) = (rh_p(Z) + lh_p(Z))/2;
+    // rh_p = (rh_p + lh_p)/2 + (rh_p - lh_p).normalized()*0.2;
+    // lh_p = (rh_p + lh_p)/2 - (rh_p - lh_p).normalized()*0.2;
+    // if(has(wbms->wp.use_targets, "rarm")){
+    //     IKConstraint tmp;
+    //     tmp.target_link_name = ee_ikc_map["rarm"].target_link_name;
+    //     tmp.localPos = ee_ikc_map["rarm"].localPos;
+    //     tmp.localR = ee_ikc_map["rarm"].localR;
+    //     tmp.targetPos = rh_p;
+    //     tmp.targetRpy << 0,deg2rad(-90),deg2rad(45);
+    //     tmp.constraint_weight = hrp::dvector6::Constant(0.1);
+    //     tmp.pos_precision = 3e-3;
+    //     tmp.rot_precision = deg2rad(3);
+    //     ikc_list.push_back(tmp);
+    // }
+    // if(has(wbms->wp.use_targets, "larm")){
+    //     IKConstraint tmp;
+    //     tmp.target_link_name = ee_ikc_map["larm"].target_link_name;
+    //     tmp.localPos = ee_ikc_map["larm"].localPos;
+    //     tmp.localR = ee_ikc_map["larm"].localR;
+    //     tmp.targetPos = lh_p;
+    //     tmp.targetRpy << 0,deg2rad(-90),deg2rad(-45);
+    //     tmp.constraint_weight = hrp::dvector6::Constant(0.1);
+    //     tmp.pos_precision = 3e-3;
+    //     tmp.rot_precision = deg2rad(3);
+    //     ikc_list.push_back(tmp);
+    // }
     if(has(wbms->wp.use_targets, "head")){
         if(fik->m_robot->link("HEAD_JOINT1") != NULL){
             IKConstraint tmp;
