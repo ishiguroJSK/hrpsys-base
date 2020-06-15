@@ -156,8 +156,11 @@ RTC::ReturnCode_t WholeBodyMasterSlave::onInitialize(){
     }else{
         avg_q_vel = hrp::dvector::Constant(fik->numStates(), 1.0); // all joint max avarage vel = 1.0 rad/s
     }
-    if(!wbms->legged){ avg_q_vel = hrp::dvector::Constant(fik->numStates(), 10.0); } // rapid manip 
     avg_q_acc = hrp::dvector::Constant(fik->numStates(), 16.0); // all joint max avarage acc = 16.0 rad/s^2
+    if(!wbms->legged){// rapid manip 
+        avg_q_vel = hrp::dvector::Constant(fik->numStates(), 40.0);
+        avg_q_acc = hrp::dvector::Constant(fik->numStates(), 99.9); // all joint max avarage acc = 16.0 rad/s^2
+        } 
     avg_q_vel.tail(6).fill(std::numeric_limits<double>::max()); // no limit for base link vel
     avg_q_acc.tail(6).fill(std::numeric_limits<double>::max()); // no limit for base link acc
     RTC_INFO_STREAM("setup interpolator finished");
@@ -564,25 +567,28 @@ void WholeBodyMasterSlave::solveFullbodyIK(HumanPose& ref){
             ikc_list.push_back(tmp);
         }
     }else{ // fixed baselink, larm, rarm setting
-        {
-            IKConstraint tmp;
-            tmp.target_link_name    = fik->m_robot->rootLink()->name;
-            tmp.localPos            = hrp::Vector3::Zero();
-            tmp.localR              = hrp::Matrix33::Identity();
-            tmp.targetPos           = hrp::to_Vector3(m_basePos.data);// will be ignored by selection_vec
-            tmp.targetRpy           = hrp::Vector3::Zero();
-            tmp.constraint_weight   << hrp::dvector6::Constant(1);
-            tmp.rot_precision       = deg2rad(3);
-            ikc_list.push_back(tmp);
-        }
+        // {
+        //     IKConstraint tmp;
+        //     tmp.target_link_name    = fik->m_robot->rootLink()->name;
+        //     tmp.localPos            = hrp::Vector3::Zero();
+        //     tmp.localR              = hrp::Matrix33::Identity();
+        //     tmp.targetPos           = hrp::to_Vector3(m_basePos.data);// will be ignored by selection_vec
+        //     tmp.targetRpy           = hrp::Vector3::Zero();
+        //     tmp.constraint_weight   << hrp::dvector6::Constant(1);
+        //     tmp.rot_precision       = deg2rad(3);
+        //     ikc_list.push_back(tmp);
+        // }
+        fik->dq_weight_all.tail(6).fill(0);// disable baselink 6DOF move
         for(auto arm : {"larm","rarm"}){
             if(has(wbms->wp.use_targets, arm)){
                 IKConstraint tmp;
                 tmp.target_link_name    = ee_ikc_map[arm].target_link_name;
                 tmp.localPos            = ee_ikc_map[arm].localPos;
                 tmp.localR              = ee_ikc_map[arm].localR;
-                tmp.targetPos           = ref.stgt(arm).abs.p;
-                tmp.targetRpy           = ref.stgt(arm).abs.rpy();
+                // tmp.targetPos           = ref.stgt(arm).abs.p;
+                // tmp.targetRpy           = ref.stgt(arm).abs.rpy();
+                tmp.targetPos           = hrp::to_Pose3(m_masterTgtPoses[arm].data).p;////////////// demo hot fix
+                tmp.targetRpy           = hrp::to_Pose3(m_masterTgtPoses[arm].data).rpy();////////////// demo hot fix
                 tmp.constraint_weight   << 1, 1, 1, 0.1, 0.1, 0.1;
                 tmp.pos_precision       = 3e-3;
                 tmp.rot_precision       = deg2rad(3);
